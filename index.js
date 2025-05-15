@@ -3,7 +3,12 @@ const crypto = require("crypto");
 const bodyParser = require("body-parser");
 
 const app = express();
-app.use(bodyParser.json());
+// Use raw body parser for webhook validation
+app.use(bodyParser.json({
+  verify: (req, res, buf) => {
+    req.rawBody = buf.toString();
+  }
+}));
 
 const SHOPIFY_SECRET = process.env.SHOPIFY_SECRET;
 const ENVIA_API_KEY = process.env.ENVIA_API_KEY;
@@ -11,7 +16,7 @@ const ENVIA_API_KEY = process.env.ENVIA_API_KEY;
 // Validate Shopify HMAC
 function validateShopifyHmac(req) {
   const hmac = req.get("X-Shopify-Hmac-Sha256");
-  const body = JSON.stringify(req.body);
+  const body = req.rawBody; // Use raw body instead of JSON.stringify
   const calculatedHmac = crypto.createHmac("sha256", SHOPIFY_SECRET).update(body, "utf8").digest("base64");
   console.log("Calculated HMAC:", calculatedHmac);
   console.log("Received HMAC:", hmac);
