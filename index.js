@@ -12,14 +12,16 @@ const ENVIA_API_KEY = process.env.ENVIA_API_KEY;
 function validateShopifyHmac(req) {
   const hmac = req.get("X-Shopify-Hmac-Sha256");
   const body = JSON.stringify(req.body);
-  console.log(body);
   const calculatedHmac = crypto.createHmac("sha256", SHOPIFY_SECRET).update(body, "utf8").digest("base64");
+  console.log("Calculated HMAC:", calculatedHmac);
+  console.log("Received HMAC:", hmac);
   return hmac === calculatedHmac;
 }
 
 // Webhook handler
 app.post("/webhook/shopify", (req, res) => {
   console.log("holi");
+  console.log(req);
   if (!validateShopifyHmac(req)) {
     return res.status(401).send("Invalid HMAC");
   }
