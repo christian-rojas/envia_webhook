@@ -12,6 +12,7 @@ const ENVIA_API_KEY = process.env.ENVIA_API_KEY;
 function validateShopifyHmac(req) {
   const hmac = req.get("X-Shopify-Hmac-Sha256");
   const body = JSON.stringify(req.body);
+  console.log(body);
   const calculatedHmac = crypto.createHmac("sha256", SHOPIFY_SECRET).update(body, "utf8").digest("base64");
   return hmac === calculatedHmac;
 }
