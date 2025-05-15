@@ -1,0 +1,77 @@
+const express = require("express");
+const crypto = require("crypto");
+const bodyParser = require("body-parser");
+
+const app = express();
+app.use(bodyParser.json());
+
+const SHOPIFY_SECRET = process.env.SHOPIFY_SECRET;
+const ENVIA_API_KEY = process.env.ENVIA_API_KEY;
+
+// Validate Shopify HMAC
+function validateShopifyHmac(req) {
+  const hmac = req.get("X-Shopify-Hmac-Sha256");
+  const body = JSON.stringify(req.body);
+  const calculatedHmac = crypto.createHmac("sha256", SHOPIFY_SECRET).update(body, "utf8").digest("base64");
+  return hmac === calculatedHmac;
+}
+
+// Webhook handler
+app.post("/webhook/shopify", (req, res) => {
+  if (!validateShopifyHmac(req)) {
+    return res.status(401).send("Invalid HMAC");
+  }
+
+  const order = req.body;
+  const shipment = formatEnviaShipment(order);
+
+  // Send to Envia API
+  createEnviaShipment(shipment)
+    .then((response) => res.status(200).send(response))
+    .catch((error) => res.status(500).send(error));
+});
+
+// Format order for Envia API
+function formatEnviaShipment(order) {
+  return {
+    origin: {
+      // Your warehouse details
+    },
+    destination: {
+      name: order.customer.first_name + " " + order.customer.last_name,
+      phone: order.customer.phone,
+      email: order.customer.email,
+      street: order.shipping_address.address1,
+      city: order.shipping_address.city,
+      state: order.shipping_address.province_code,
+      country: order.shipping_address.country_code,
+      postalCode: order.shipping_address.zip,
+    },
+    packages: order.line_items.map((item) => ({
+      weight: item.grams / 1000,
+      height: 10,
+      width: 10,
+      length: 10,
+      type: "box",
+    })),
+    carrier: "DHL",
+  };
+}
+
+// Create shipment in Envia
+async function createEnviaShipment(shipment) {
+  const response = await fetch("https://api.envia.com/shipments", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${ENVIA_API_KEY}`,
+    },
+    body: JSON.stringify(shipment),
+  });
+  return response.json();
+}
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
