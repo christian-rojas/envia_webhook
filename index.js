@@ -17,10 +17,10 @@ const ENVIA_API_KEY = process.env.ENVIA_API_KEY;
 
 // Validate Shopify HMAC
 function validateShopifyHmac(req) {
-  const hmac = req.get("X-Shopify-Hmac-Sha256");
+  const hmac = req.headers["x-shopify-hmac-sha256"];
   const body = req.rawBody; // Use raw body instead of JSON.stringify
 
-  const calculatedHmac = crypto.createHmac("sha256", SHOPIFY_SECRET).update(body, "utf8").digest("base64");
+  const calculatedHmac = crypto.createHmac("sha256", SHOPIFY_SECRET).update(req.rawBody).digest("base64");
   console.log("Calculated HMAC:", calculatedHmac);
   console.log("Received HMAC:", hmac);
   return crypto.timingSafeEqual(Buffer.from(hmac), Buffer.from(calculatedHmac));
