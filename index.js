@@ -18,6 +18,7 @@ function validateShopifyHmac(req) {
 
 // Webhook handler
 app.post("/webhook/shopify", (req, res) => {
+  console.log("holi");
   if (!validateShopifyHmac(req)) {
     return res.status(401).send("Invalid HMAC");
   }
@@ -71,7 +72,4 @@ async function createEnviaShipment(shipment) {
   return response.json();
 }
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+module.exports = app;
