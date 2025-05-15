@@ -27,6 +27,8 @@ app.post("/webhook/shopify", (req, res) => {
   const order = req.body;
   const shipment = formatEnviaShipment(order);
 
+  console.log("casi");
+
   // Send to Envia API
   createEnviaShipment(shipment)
     .then((response) => res.status(200).send(response))
