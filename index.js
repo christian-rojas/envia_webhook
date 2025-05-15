@@ -32,6 +32,9 @@ function validateShopifyHmac(req) {
   console.log(SHOPIFY_SECRET);
   console.log(hmac);
   const generatedHmac = crypto.createHmac("sha256", SHOPIFY_SECRET).update(body, "utf8").digest("hex");
+  console.log("Calculated HMAC:", generatedHmac);
+  console.log("Received HMAC:", hmac);
+  return generatedHmac === hmac;
 }
 
 // Webhook handler
