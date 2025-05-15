@@ -16,25 +16,14 @@ const SHOPIFY_SECRET = process.env.SHOPIFY_SECRET;
 const ENVIA_API_KEY = process.env.ENVIA_API_KEY;
 
 // Validate Shopify HMAC
-// function validateShopifyHmac(req) {
-//   const hmac = req.get("X-Shopify-Hmac-Sha256");
-//   const body = req.rawBody; // Use raw body instead of JSON.stringify
-
-//   // const calculatedHmac = crypto.createHmac("sha256", SHOPIFY_SECRET).update(body, "utf8").digest("base64");
-//   console.log("Calculated HMAC:", calculatedHmac);
-//   console.log("Received HMAC:", hmac);
-//   return hmac === calculatedHmac;
-// }
-
 function validateShopifyHmac(req) {
   const hmac = req.get("X-Shopify-Hmac-Sha256");
-  const body = req.rawBody;
-  console.log(SHOPIFY_SECRET);
-  console.log(hmac);
-  const generatedHmac = crypto.createHmac("sha256", SHOPIFY_SECRET).update(body, "utf8").digest("hex");
-  console.log("Calculated HMAC:", generatedHmac);
+  const body = req.rawBody; // Use raw body instead of JSON.stringify
+
+  const calculatedHmac = crypto.createHmac("sha256", SHOPIFY_SECRET).update(body, "utf8").digest("base64");
+  console.log("Calculated HMAC:", calculatedHmac);
   console.log("Received HMAC:", hmac);
-  return generatedHmac === hmac;
+  return hmac === calculatedHmac;
 }
 
 // Webhook handler
