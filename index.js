@@ -29,9 +29,9 @@ const ENVIA_API_KEY = process.env.ENVIA_API_KEY;
 function validateShopifyHmac(req) {
   const hmac = req.get("X-Shopify-Hmac-Sha256");
   const body = req.rawBody;
-  const generatedHmac = crypto.createHmac("sha256", SHOPIFY_SECRET).update(body, "utf8").digest("base64");
-
-  return crypto.timingSafeEqual(Buffer.from(generatedHmac, "utf8"), Buffer.from(hmac, "utf8"));
+  console.log(SHOPIFY_SECRET);
+  console.log(hmac);
+  const generatedHmac = crypto.createHmac("sha256", SHOPIFY_SECRET).update(body, "utf8").digest("hex");
 }
 
 // Webhook handler
