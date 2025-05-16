@@ -28,7 +28,6 @@ function validateShopifyHmac(req) {
 // Webhook handler
 app.post("/webhook/shopify", (req, res) => {
   console.log("holi");
-  console.log(req);
   if (!validateShopifyHmac(req)) {
     return res.status(401).send("Invalid HMAC");
   }
@@ -37,6 +36,7 @@ app.post("/webhook/shopify", (req, res) => {
   const shipment = formatEnviaShipment(order);
 
   console.log("casi");
+  console.log(shipment);
 
   // Send to Envia API
   createEnviaShipment(shipment)
@@ -50,7 +50,7 @@ function formatEnviaShipment(order) {
     origin: {
       address_id: 1587507,
       type: "origin",
-      name: "Mondano Limitada                    ",
+      name: "Mondano Limitada",
       company: "Diseñadora y Comercializadora Mondano Limitada",
       email: "contacto@mondano.cl",
       phone: "986891362",
