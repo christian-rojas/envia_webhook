@@ -88,7 +88,7 @@ async function createEnviaShipment(shipment) {
       body: JSON.stringify(shipment),
     });
     console.log("termino el fetch");
-    return response.json();
+    return response;
   } catch (error) {
     console.log("error final", error);
   }
