@@ -1,6 +1,8 @@
 const express = require("express");
 const crypto = require("crypto");
 const bodyParser = require("body-parser");
+// import fetch from "node-fetch";
+const fetch = (...args) => import("node-fetch").then(({ default: fetch }) => fetch(...args));
 
 const app = express();
 // Use raw body parser for webhook validation
@@ -75,6 +77,7 @@ function formatEnviaShipment(order) {
 
 // Create shipment in Envia
 async function createEnviaShipment(shipment) {
+  console.log("entra en el fetch");
   const response = await fetch("https://api.envia.com/shipments", {
     method: "POST",
     headers: {
