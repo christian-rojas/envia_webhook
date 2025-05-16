@@ -18,7 +18,6 @@ const ENVIA_API_KEY = process.env.ENVIA_API_KEY;
 // Validate Shopify HMAC
 function validateShopifyHmac(req) {
   const hmac = req.headers["x-shopify-hmac-sha256"];
-  const body = req.rawBody; // Use raw body instead of JSON.stringify
 
   const calculatedHmac = crypto.createHmac("sha256", SHOPIFY_SECRET).update(req.rawBody).digest("base64");
   console.log("Calculated HMAC:", calculatedHmac);
@@ -49,7 +48,29 @@ app.post("/webhook/shopify", (req, res) => {
 function formatEnviaShipment(order) {
   return {
     origin: {
-      // Your warehouse details
+      address_id: 1587507,
+      type: "origin",
+      name: "Mondano Limitada                    ",
+      company: "Diseñadora y Comercializadora Mondano Limitada",
+      email: "contacto@mondano.cl",
+      phone: "986891362",
+      phone_code: "CL",
+      street: "Lote 2, La Isla sin número, Olivar",
+      number: "000000",
+      district: "Cachapoal",
+      interior_number: null,
+      city: "Olivar",
+      state: "LI",
+      country: "CL",
+      postal_code: "",
+      identification_number: "76.915.142-7",
+      reference: "",
+      latitude: null,
+      longitude: null,
+      state_registration: null,
+      return_address: 0,
+      description: "Residential",
+      branches: [],
     },
     destination: {
       name: order.customer.first_name + " " + order.customer.last_name,
@@ -62,13 +83,12 @@ function formatEnviaShipment(order) {
       postalCode: order.shipping_address.zip,
     },
     packages: order.line_items.map((item) => ({
-      weight: item.grams / 1000,
+      weight: 750,
       height: 10,
-      width: 10,
-      length: 10,
+      width: 30,
+      length: 30,
       type: "box",
     })),
-    carrier: "DHL",
   };
 }
 
