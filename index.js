@@ -45,7 +45,7 @@ function formatEnviaShipment(order) {
       city: "Olivar",
       state: "LI",
       country: "CL",
-      postal_code: "",
+      postalCode: "2920000",
       identification_number: "76.915.142-7",
       reference: "",
       latitude: null,
@@ -66,11 +66,19 @@ function formatEnviaShipment(order) {
       postalCode: order.shipping_address.zip,
     },
     packages: order.line_items.map((item) => ({
-      weight: 750,
-      height: 10,
-      width: 30,
-      length: 30,
+      content: order.order_status_url,
+      amount: item.quantity,
       type: "box",
+      dimensions: {
+        length: 30,
+        width: 30,
+        height: 10,
+      },
+      weight: 1,
+      insurance: 0,
+      declaredValue: 60000,
+      weightUnit: "KG",
+      lengthUnit: "CM",
     })),
   };
 }
@@ -79,7 +87,7 @@ function formatEnviaShipment(order) {
 async function createEnviaShipment(shipment) {
   console.log("entra en el fetch");
   try {
-    const response = await fetch("https://ship-test.envia.com/ship/generate", {
+    const response = await fetch("https://api.envia.com/ship/generate", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -88,7 +96,7 @@ async function createEnviaShipment(shipment) {
       body: JSON.stringify(shipment),
     });
     console.log("termino el fetch");
-    console.log(await response.json());
+    console.log(response);
     return response;
   } catch (error) {
     console.log("error final", error);
