@@ -25,30 +25,6 @@ function validateShopifyHmac(req) {
   return crypto.timingSafeEqual(Buffer.from(hmac), Buffer.from(calculatedHmac));
 }
 
-// Webhook handler
-app.post("/webhook/shopify", (req, res) => {
-  console.log("holi");
-  if (!validateShopifyHmac(req)) {
-    return res.status(401).send("Invalid HMAC");
-  }
-
-  const order = req.body;
-  const shipment = formatEnviaShipment(order);
-
-  console.log("casi");
-  console.log(shipment);
-
-  // Send to Envia API
-  try {
-    createEnviaShipment(shipment)
-      .then((response) => res.status(200).send(response))
-      .catch((error) => res.status(500).send(error));
-  } catch (error) {
-    console.log("error", error);
-    res.status(500).send("Error creating shipment");
-  }
-});
-
 // Format order for Envia API
 function formatEnviaShipment(order) {
   return {
@@ -109,5 +85,29 @@ async function createEnviaShipment(shipment) {
   });
   return response.json();
 }
+
+// Webhook handler
+app.post("/webhook/shopify", (req, res) => {
+  console.log("holi");
+  if (!validateShopifyHmac(req)) {
+    return res.status(401).send("Invalid HMAC");
+  }
+
+  const order = req.body;
+  const shipment = formatEnviaShipment(order);
+
+  console.log("casi");
+  console.log(shipment);
+  console.log("after shipment");
+  // Send to Envia API
+  try {
+    createEnviaShipment(shipment)
+      .then((response) => res.status(200).send(response))
+      .catch((error) => res.status(500).send(error));
+  } catch (error) {
+    console.log("error", error);
+    res.status(500).send("Error creating shipment");
+  }
+});
 
 module.exports = app;
