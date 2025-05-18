@@ -64,10 +64,10 @@ function formatEnviaShipment(order) {
       state: order.shipping_address.province_code,
       country: order.shipping_address.country_code,
       postalCode: order.shipping_address.zip,
-      number: "order.shipping_address.number" || "000001",
+      number: order.shipping_address.number || "000001",
     },
     packages: order.line_items.map((item) => ({
-      content: order.order_number,
+      content: JSON.stringify(order.order_number),
       amount: item.quantity,
       type: "box",
       dimensions: {
