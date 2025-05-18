@@ -67,7 +67,7 @@ function formatEnviaShipment(order) {
       number: order.shipping_address.number,
     },
     packages: order.line_items.map((item) => ({
-      content: order.order_status_url,
+      content: order.order_number,
       amount: item.quantity,
       type: "box",
       dimensions: {
