@@ -81,6 +81,17 @@ function formatEnviaShipment(order) {
       weightUnit: "KG",
       lengthUnit: "CM",
     })),
+    settings: {
+      printFormat: "PDF",
+      printSize: "STOCK_4X6",
+      labelFormat: "PDF",
+      comments: "MON2010",
+    },
+    shipment: {
+      carrier: "chilexpress",
+      service: "express",
+      type: 1,
+    },
   };
 }
 
@@ -97,7 +108,7 @@ async function createEnviaShipment(shipment) {
       body: JSON.stringify(shipment),
     });
     console.log("termino el fetch");
-    console.log(JSON.stringify(response));
+    console.log("el response", response);
     return response;
   } catch (error) {
     console.log("error final", error);
