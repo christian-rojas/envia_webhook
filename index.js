@@ -22,8 +22,6 @@ function validateShopifyHmac(req) {
   const hmac = req.headers["x-shopify-hmac-sha256"];
 
   const calculatedHmac = crypto.createHmac("sha256", SHOPIFY_SECRET).update(req.rawBody).digest("base64");
-  console.log("Calculated HMAC:", calculatedHmac);
-  console.log("Received HMAC:", hmac);
   return crypto.timingSafeEqual(Buffer.from(hmac), Buffer.from(calculatedHmac));
 }
 
@@ -118,7 +116,6 @@ async function createEnviaShipment(shipment) {
 
 // Webhook handler
 app.post("/webhook/shopify", (req, res) => {
-  console.log("holi");
   if (!validateShopifyHmac(req)) {
     return res.status(401).send("Invalid HMAC");
   }
