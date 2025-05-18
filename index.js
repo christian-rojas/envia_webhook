@@ -64,6 +64,7 @@ function formatEnviaShipment(order) {
       state: order.shipping_address.province_code,
       country: order.shipping_address.country_code,
       postalCode: order.shipping_address.zip,
+      number: order.shipping_address.number,
     },
     packages: order.line_items.map((item) => ({
       content: order.order_status_url,
@@ -86,7 +87,6 @@ function formatEnviaShipment(order) {
 // Create shipment in Envia
 async function createEnviaShipment(shipment) {
   console.log("entra en el fetch");
-  console.log(JSON.stringify(ENVIA_API_KEY));
   try {
     const response = await fetch("https://api.envia.com/ship/generate", {
       method: "POST",
@@ -112,10 +112,11 @@ app.post("/webhook/shopify", (req, res) => {
   }
 
   const order = req.body;
+  console.log(JSON.stringify(order, null, 2));
   const shipment = formatEnviaShipment(order);
 
   console.log("casi");
-  console.log(shipment);
+  // console.log(shipment);
   console.log("after shipment");
   // Send to Envia API
   try {
