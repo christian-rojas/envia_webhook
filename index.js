@@ -108,8 +108,9 @@ async function createEnviaShipment(shipment) {
       body: JSON.stringify(shipment),
     });
     console.log("termino el fetch");
-    console.log("el response", response);
-    return response;
+    const responseData = await response;
+    console.log("aver", responseData);
+    return responseData;
   } catch (error) {
     console.log("error final", error);
   }
@@ -125,14 +126,19 @@ app.post("/webhook/shopify", (req, res) => {
   const order = req.body;
   console.log(JSON.stringify(order, null, 2));
   const shipment = formatEnviaShipment(order);
+  console.log("el shipment", JSON.stringify(shipment));
 
-  console.log("casi");
-  // console.log(shipment);
   console.log("after shipment");
   // Send to Envia API
   try {
     createEnviaShipment(shipment)
-      .then((response) => res.status(200).send(response))
+      .then((response) => {
+        console.log("response", response);
+        res
+          .status(200)
+          .send(response)
+          .catch((error) => res.status(500).send(error));
+      })
       .catch((error) => res.status(500).send(error));
   } catch (error) {
     console.log("error", error);
