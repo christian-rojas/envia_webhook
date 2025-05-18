@@ -132,8 +132,10 @@ app.post("/webhook/shopify", (req, res) => {
   // Send to Envia API
   try {
     createEnviaShipment(shipment).then((response) => {
-      console.log("response", response);
-      res.status(200).send(response);
+      response.json().then((data) => {
+        console.log(data);
+        res.status(200).send("Shipment created");
+      });
     });
   } catch (error) {
     console.log("error", error);
