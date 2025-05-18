@@ -86,6 +86,7 @@ function formatEnviaShipment(order) {
 // Create shipment in Envia
 async function createEnviaShipment(shipment) {
   console.log("entra en el fetch");
+  console.log(JSON.stringify(ENVIA_API_KEY));
   try {
     const response = await fetch("https://api.envia.com/ship/generate", {
       method: "POST",
@@ -96,7 +97,7 @@ async function createEnviaShipment(shipment) {
       body: JSON.stringify(shipment),
     });
     console.log("termino el fetch");
-    console.log(response);
+    console.log(JSON.stringify(response));
     return response;
   } catch (error) {
     console.log("error final", error);
