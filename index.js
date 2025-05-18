@@ -131,15 +131,10 @@ app.post("/webhook/shopify", (req, res) => {
   console.log("after shipment");
   // Send to Envia API
   try {
-    createEnviaShipment(shipment)
-      .then((response) => {
-        console.log("response", response);
-        res
-          .status(200)
-          .send(response)
-          .catch((error) => res.status(500).send(error));
-      })
-      .catch((error) => res.status(500).send(error));
+    createEnviaShipment(shipment).then((response) => {
+      console.log("response", response);
+      res.status(200).send(response);
+    });
   } catch (error) {
     console.log("error", error);
     res.status(500).send("Error creating shipment");
