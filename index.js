@@ -61,7 +61,7 @@ function formatEnviaShipment(order) {
       city: order.shipping_address.city,
       state: order.shipping_address.province_code,
       country: order.shipping_address.country_code,
-      postalCode: order.shipping_address.zip,
+      postalCode: order.shipping_address.zip || "2920000",
       number: order.shipping_address.number || "000001",
     },
     packages: order.line_items.map((item) => ({
