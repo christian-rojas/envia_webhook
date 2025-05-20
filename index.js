@@ -25,8 +25,46 @@ function validateShopifyHmac(req) {
   return crypto.timingSafeEqual(Buffer.from(hmac), Buffer.from(calculatedHmac));
 }
 
+// Búsqueda de API de Código Postal para Chile
+
+// Función para obtener código postal por comuna
+async function getPostalCodeByCommune(address, commune) {
+  try {
+    //cortar string en 2 discriminando string y numero
+    const addressArray = address.split(" ");
+    const number = addressArray.pop();
+    const street = addressArray.join(" ");
+    console.log("street", street);
+    console.log("number", number);
+    const response = await fetch(
+      `https://postal-code-api.kainext.cl/v1/postal-codes/search?commune=${commune}&street=${street}&number=${number}`,
+      {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }
+    );
+    const data = await response.json();
+    console.log(data);
+    return data.postalCode || null; // Código postal por defecto si no se encuentra
+  } catch (error) {
+    console.error("Error obteniendo código postal:", error);
+    return null; // Código postal por defecto en caso de error
+  }
+}
+
 // Format order for Envia API
-function formatEnviaShipment(order) {
+async function formatEnviaShipment(order) {
+  // Obtener la comuna desde la dirección de envío
+  const commune = order.shipping_address.city;
+
+  // Get postal code asynchronously if needed
+  let postalCode = order.shipping_address.zip;
+  if (!postalCode) {
+    postalCode = (await getPostalCodeByCommune(order.shipping_address.address1, commune)) || null;
+  }
+
   return {
     origin: {
       address_id: 1587507,
@@ -61,7 +99,7 @@ function formatEnviaShipment(order) {
       city: order.shipping_address.city,
       state: order.shipping_address.province_code,
       country: order.shipping_address.country_code,
-      postalCode: order.shipping_address.zip || "2920000",
+      postalCode: postalCode,
       number: order.shipping_address.number || "000001",
     },
     packages: order.line_items.map((item) => ({
@@ -115,25 +153,25 @@ async function createEnviaShipment(shipment) {
 }
 
 // Webhook handler
-app.post("/webhook/shopify", (req, res) => {
+app.post("/webhook/shopify", async (req, res) => {
   if (!validateShopifyHmac(req)) {
     return res.status(401).send("Invalid HMAC");
   }
 
   const order = req.body;
   console.log(JSON.stringify(order, null, 2));
-  const shipment = formatEnviaShipment(order);
-  console.log("el shipment", JSON.stringify(shipment));
 
-  console.log("after shipment");
-  // Send to Envia API
   try {
-    createEnviaShipment(shipment).then((response) => {
-      response.json().then((data) => {
-        console.log(data);
-        res.status(200).send("Shipment created");
-      });
-    });
+    // Now we need to await the formatEnviaShipment function
+    const shipment = await formatEnviaShipment(order);
+    console.log("el shipment", JSON.stringify(shipment));
+
+    console.log("after shipment");
+    // Send to Envia API
+    const response = await createEnviaShipment(shipment);
+    const data = await response.json();
+    console.log(data);
+    res.status(200).send("Shipment created");
   } catch (error) {
     console.log("error", error);
     res.status(500).send("Error creating shipment");
