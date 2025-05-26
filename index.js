@@ -111,7 +111,7 @@ async function formatEnviaShipment(order) {
         width: 30,
         height: 10,
       },
-      weight: 0.75,
+      weight: 1,
       insurance: 0,
       declaredValue: 60000,
       weightUnit: "KG",
