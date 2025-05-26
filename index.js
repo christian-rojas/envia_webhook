@@ -105,11 +105,11 @@ async function formatEnviaShipment(order) {
     packages: order.line_items.map((item) => ({
       content: "MON" + JSON.stringify(order.order_number),
       amount: item.quantity,
-      type: "box",
+      type: "envelope",
       dimensions: {
         length: 30,
         width: 30,
-        height: 10,
+        height: 5,
       },
       weight: 1,
       insurance: 0,
