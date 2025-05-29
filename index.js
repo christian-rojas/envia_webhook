@@ -65,6 +65,17 @@ async function formatEnviaShipment(order) {
     postalCode = (await getPostalCodeByCommune(order.shipping_address.address1, commune)) || null;
   }
 
+  const dimension = {
+    length: 30,
+    width: 30,
+    height: 5,
+  };
+  const weight = 1;
+
+  if (order.line_items.length > 1) {
+    dimension.height = 10;
+    weight = 1.5;
+  }
   return {
     origin: {
       address_id: 1587507,
@@ -102,21 +113,19 @@ async function formatEnviaShipment(order) {
       postalCode: postalCode,
       number: order.shipping_address.number || "000001",
     },
-    packages: order.line_items.map((item) => ({
-      content: "MON" + JSON.stringify(order.order_number),
-      amount: item.quantity,
-      type: "envelope",
-      dimensions: {
-        length: 30,
-        width: 30,
-        height: 5,
+    packages: [
+      {
+        content: "MON" + JSON.stringify(order.order_number),
+        amount: order.line_items.length,
+        type: "envelope",
+        dimensions: dimension,
+        weight: weight,
+        insurance: 0,
+        declaredValue: 60000,
+        weightUnit: "KG",
+        lengthUnit: "CM",
       },
-      weight: 1,
-      insurance: 0,
-      declaredValue: 60000,
-      weightUnit: "KG",
-      lengthUnit: "CM",
-    })),
+    ],
     settings: {
       printFormat: "PDF",
       printSize: "STOCK_4X6",
