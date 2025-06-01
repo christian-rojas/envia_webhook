@@ -3,6 +3,7 @@ const crypto = require("crypto");
 const bodyParser = require("body-parser");
 // import fetch from "node-fetch";
 const fetch = (...args) => import("node-fetch").then(({ default: fetch }) => fetch(...args));
+const { sendOrderConfirmationEmail } = require("./utils.js");
 
 const app = express();
 // Use raw body parser for webhook validation
@@ -153,9 +154,7 @@ async function createEnviaShipment(shipment) {
       body: JSON.stringify(shipment),
     });
     console.log("termino el fetch");
-    const responseData = await response;
-    console.log("aver", responseData);
-    return responseData;
+    return await response;
   } catch (error) {
     console.log("error final", error);
   }
@@ -180,6 +179,15 @@ app.post("/webhook/shopify", async (req, res) => {
     const response = await createEnviaShipment(shipment);
     const data = await response.json();
     console.log(data);
+    if (data.error) {
+      console.error("Error creating shipment:", data.error.message);
+      try {
+        await sendOrderConfirmationEmail(shipment.packages[0].content, data.error.message);
+      } catch (emailError) {
+        console.error("Error sending email:", emailError);
+      }
+      return res.status(500).send("Error creating shipment");
+    }
     res.status(200).send("Shipment created");
   } catch (error) {
     console.log("error", error);
