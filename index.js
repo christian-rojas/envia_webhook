@@ -66,12 +66,12 @@ async function formatEnviaShipment(order) {
     postalCode = (await getPostalCodeByCommune(order.shipping_address.address1, commune)) || null;
   }
 
-  const dimension = {
+  let dimension = {
     length: 30,
     width: 30,
     height: 5,
   };
-  const weight = 1;
+  let weight = 1;
 
   if (order.line_items.length > 1) {
     dimension.height = 10;
