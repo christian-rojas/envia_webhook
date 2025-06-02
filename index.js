@@ -179,10 +179,19 @@ app.post("/webhook/shopify", async (req, res) => {
     const response = await createEnviaShipment(shipment);
     const data = await response.json();
     console.log(data);
+    if (data.meta === "generate") {
+      if (data.data[0].currentBalance < 20000) {
+        try {
+          await sendOrderConfirmationEmail(shipment.packages[0].content, data.data[0].currentBalance);
+        } catch (emailError) {
+          console.error("Error sending email:", emailError);
+        }
+      }
+    }
     if (data.error) {
-      console.error("Error creating shipment:", data.error.message);
+      console.error("Error creating shipment:", data.error?.message);
       try {
-        await sendOrderConfirmationEmail(shipment.packages[0].content, data.error.message);
+        await sendOrderConfirmationEmail(shipment.packages[0].content, data.error?.message ?? "error");
       } catch (emailError) {
         console.error("Error sending email:", emailError);
       }

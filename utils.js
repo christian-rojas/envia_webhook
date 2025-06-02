@@ -24,10 +24,9 @@ async function sendOrderConfirmationEmail(order, data) {
     const mailOptions = {
       from: ZOHO_EMAIL,
       to: "christian.ici17@gmail.com",
-      subject: `creacion de envio fallo - Order #${order.order_number}`,
+      subject: `creacion de envio fallo - Order #${order}`,
       html: `
-        <h1>la razon fue la siguiente: ${data.error.message}</h1>
-        
+        <h1>${data}</h1>
       `,
     };
 
