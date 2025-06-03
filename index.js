@@ -177,6 +177,7 @@ app.post("/webhook/shopify", async (req, res) => {
     console.log("after shipment");
     // Send to Envia API
     const response = await createEnviaShipment(shipment);
+
     const data = await response.json();
     console.log(data);
     if (data.meta === "generate") {
@@ -195,9 +196,14 @@ app.post("/webhook/shopify", async (req, res) => {
       } catch (emailError) {
         console.error("Error sending email:", emailError);
       }
-      return res.status(500).send("Error creating shipment");
     }
-    res.status(200).send("Shipment created");
+    try {
+      await saveShipmentData(order, shipment, data);
+      res.status(200).send("Shipment created");
+    } catch (error) {
+      console.log(JSON.stringify("error", error));
+      res.status(500).send("Error saving to Supabase");
+    }
   } catch (error) {
     console.log("error", error);
     res.status(500).send("Error creating shipment");
