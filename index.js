@@ -207,7 +207,7 @@ app.post("/webhook/shopify", async (req, res) => {
     const response = await createEnviaShipment(shipment);
 
     if (response.error) {
-      res.status(500).send(data.error.message);
+      res.status(500).send(response.error.message);
     }
 
     const data = await response.json();
