@@ -154,6 +154,15 @@ async function createEnviaShipment(shipment) {
   if (data.length > 0) {
     console.log("mi order", shipment.packages[0].content);
     console.log("Data found:", data[0].shopify_order_id);
+    if (shipment.packages[0].content === data[0].shopify_order_id) {
+      console.log("Ya existe un envío con este ID de pedido");
+      // throw new Error("Shipment already exists for this order ID");
+      return {
+        error: {
+          message: "Ya existe un envío con este ID de pedido",
+        },
+      };
+    }
   }
   try {
     const response = await fetch("https://api.envia.com/ship/generate", {
