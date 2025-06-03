@@ -152,11 +152,17 @@ async function createEnviaShipment(shipment) {
   console.log("entra en el fetch");
   const { data, error } = await supabase.from("shipments").select("shopify_order_id");
   if (data.length > 0) {
-    console.log("mi order", shipment.packages[0].content);
-    console.log("Data found:", data[0].shopify_order_id);
-    if (shipment.packages[0].content === data[0].shopify_order_id) {
-      console.log("Ya existe un envío con este ID de pedido");
-      // throw new Error("Shipment already exists for this order ID");
+    const found = data.filter((item) => {
+      console.log("item", item.shopify_order_id);
+      console.log("shipment", shipment.packages[0].content);
+      if (item.shopify_order_id === shipment.packages[0].content) {
+        console.log("Ya existe un envío con este ID de pedido");
+        // throw new Error("Shipment already exists for this order ID");
+        return true;
+      }
+      return false;
+    });
+    if (found) {
       return {
         error: {
           message: "Ya existe un envío con este ID de pedido",
