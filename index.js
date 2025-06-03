@@ -162,7 +162,7 @@ async function createEnviaShipment(shipment) {
       }
       return false;
     });
-    if (found) {
+    if (found.length > 0) {
       return {
         error: {
           message: "Ya existe un envío con este ID de pedido",
