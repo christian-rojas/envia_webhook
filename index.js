@@ -238,7 +238,7 @@ app.post("/webhook/shopify", async (req, res) => {
     }
   } catch (error) {
     console.log("error final", error);
-    res.status(500).send("Error creating shipment");
+    // res.status(500).send("Error creating shipment");
   }
 });
 
