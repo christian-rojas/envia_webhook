@@ -206,7 +206,7 @@ app.post("/webhook/shopify", async (req, res) => {
     // Send to Envia API
     const response = await createEnviaShipment(shipment);
 
-    if (data.error) {
+    if (response.error) {
       res.status(500).send(data.error.message);
     }
 
