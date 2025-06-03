@@ -6,6 +6,7 @@ const fetch = (...args) => import("node-fetch").then(({ default: fetch }) => fet
 const { sendOrderConfirmationEmail } = require("./utils.js");
 const { createClient } = require("@supabase/supabase-js");
 const dotenv = require("dotenv");
+const { saveShipmentData } = require("./supa.js");
 dotenv.config();
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
