@@ -4,6 +4,11 @@ const bodyParser = require("body-parser");
 // import fetch from "node-fetch";
 const fetch = (...args) => import("node-fetch").then(({ default: fetch }) => fetch(...args));
 const { sendOrderConfirmationEmail } = require("./utils.js");
+const { createClient } = require("@supabase/supabase-js");
+const dotenv = require("dotenv");
+dotenv.config();
+
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
 const app = express();
 // Use raw body parser for webhook validation
@@ -144,6 +149,11 @@ async function formatEnviaShipment(order) {
 // Create shipment in Envia
 async function createEnviaShipment(shipment) {
   console.log("entra en el fetch");
+  const { data, error } = await supabase.from("shipments").select("shopify_order_id");
+  if (data.length > 0) {
+    console.log("mi order", shipment.packages[0].content);
+    console.log("Data found:", data[0].shopify_order_id);
+  }
   try {
     const response = await fetch("https://api.envia.com/ship/generate", {
       method: "POST",
@@ -201,11 +211,11 @@ app.post("/webhook/shopify", async (req, res) => {
       await saveShipmentData(order, shipment, data);
       res.status(200).send("Shipment created");
     } catch (error) {
-      console.log(JSON.stringify("error", error));
+      console.log(JSON.stringify("error saving to supa", error));
       res.status(500).send("Error saving to Supabase");
     }
   } catch (error) {
-    console.log("error", error);
+    console.log("error final", error);
     res.status(500).send("Error creating shipment");
   }
 });
