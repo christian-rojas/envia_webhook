@@ -182,7 +182,7 @@ async function createEnviaShipment(shipment) {
       body: JSON.stringify(shipment),
     });
     console.log("termino el fetch");
-    return await response;
+    return await response.json();
   } catch (error) {
     console.log("error final", error);
   }
@@ -210,7 +210,7 @@ app.post("/webhook/shopify", async (req, res) => {
       res.status(500).send(response.error.message);
     }
 
-    const data = await response.json();
+    const data = response;
     console.log(data);
     if (data.meta === "generate") {
       if (data.data[0].currentBalance < 20000) {
