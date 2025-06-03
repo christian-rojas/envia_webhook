@@ -78,10 +78,12 @@ async function formatEnviaShipment(order) {
     height: 5,
   };
   let weight = 1;
+  let quantityPackages = 1;
 
-  if (order.line_items.length > 1) {
+  if (order.line_items.length > 3) {
     dimension.height = 10;
     weight = 1.5;
+    quantityPackages = 2;
   }
   return {
     origin: {
@@ -123,7 +125,7 @@ async function formatEnviaShipment(order) {
     packages: [
       {
         content: "MON" + JSON.stringify(order.order_number),
-        amount: order.line_items.length,
+        amount: quantityPackages,
         type: "envelope",
         dimensions: dimension,
         weight: weight,
@@ -213,6 +215,12 @@ app.post("/webhook/shopify", async (req, res) => {
     const data = response;
     console.log(data);
     if (data.meta === "generate") {
+      try {
+        await saveShipmentData(order, shipment, data);
+      } catch (error) {
+        console.error("Error saving to Supabase:", error);
+      }
+
       if (data.data[0].currentBalance < 20000) {
         try {
           await sendOrderConfirmationEmail(shipment.packages[0].content, data.data[0].currentBalance);
@@ -220,6 +228,7 @@ app.post("/webhook/shopify", async (req, res) => {
           console.error("Error sending email:", emailError);
         }
       }
+      res.status(200).send("Shipment created");
     }
     if (data.error) {
       console.error("Error creating shipment:", data.error?.message);
@@ -229,16 +238,9 @@ app.post("/webhook/shopify", async (req, res) => {
         console.error("Error sending email:", emailError);
       }
     }
-    try {
-      await saveShipmentData(order, shipment, data);
-      res.status(200).send("Shipment created");
-    } catch (error) {
-      console.log(JSON.stringify("error saving to supa", error));
-      res.send("Error saving to Supabase");
-    }
   } catch (error) {
     console.log("error final", error);
-    // res.status(500).send("Error creating shipment");
+    res.status(500).send("Error creating shipment");
   }
 });
 
