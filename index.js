@@ -170,6 +170,8 @@ async function createEnviaShipment(shipment) {
       };
     }
   }
+  console.log("found false");
+
   try {
     const response = await fetch("https://api.envia.com/ship/generate", {
       method: "POST",
@@ -203,6 +205,10 @@ app.post("/webhook/shopify", async (req, res) => {
     console.log("after shipment");
     // Send to Envia API
     const response = await createEnviaShipment(shipment);
+
+    if (data.error) {
+      res.status(500).send(data.error.message);
+    }
 
     const data = await response.json();
     console.log(data);
