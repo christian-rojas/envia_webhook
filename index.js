@@ -150,7 +150,7 @@ async function formatEnviaShipment(order) {
 // Create shipment in Envia
 async function createEnviaShipment(shipment) {
   console.log("entra en el fetch");
-  const { data, error } = await supabase.from("shipments").select("shopify_order_id");
+  const { data, error } = await supabase.from("shipments").select("shopify_order_id").eq("status", "generated");
   if (data.length > 0) {
     const found = data.filter((item) => {
       console.log("item", item.shopify_order_id);
@@ -234,7 +234,7 @@ app.post("/webhook/shopify", async (req, res) => {
       res.status(200).send("Shipment created");
     } catch (error) {
       console.log(JSON.stringify("error saving to supa", error));
-      res.status(500).send("Error saving to Supabase");
+      res.send("Error saving to Supabase");
     }
   } catch (error) {
     console.log("error final", error);
