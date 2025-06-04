@@ -234,6 +234,18 @@ app.post("/webhook/shopify", async (req, res) => {
       console.error("Error creating shipment:", data.error?.message);
       try {
         await sendOrderConfirmationEmail(shipment.packages[0].content, data.error?.message ?? "error");
+        shipment.shipment.service = "extended";
+        const responseExtended = await createEnviaShipment(shipment);
+        if (responseExtended.meta === "generate") {
+          try {
+            await saveShipmentData(order, shipment, responseExtended);
+          } catch (error) {
+            console.error("Error saving to Supabase:", error);
+          }
+          res.status(200).send("Shipment created");
+        } else {
+          res.status(500).send("Error creating shipment");
+        }
       } catch (emailError) {
         console.error("Error sending email:", emailError);
       }
