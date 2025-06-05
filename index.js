@@ -68,8 +68,14 @@ async function formatEnviaShipment(order) {
 
   // Get postal code asynchronously if needed
   let postalCode = order.shipping_address.zip;
+  let address = order.shipping_address.address1;
+  //remove '#' before number in address if found and concat the number to the address
+
+  if (address.includes("#")) {
+    address = address.split("#")[0] + address.split("#")[1];
+  }
   if (!postalCode) {
-    postalCode = (await getPostalCodeByCommune(order.shipping_address.address1, commune)) || null;
+    postalCode = (await getPostalCodeByCommune(address, commune)) || null;
   }
 
   let dimension = {
