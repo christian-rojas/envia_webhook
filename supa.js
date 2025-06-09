@@ -4,6 +4,18 @@ dotenv.config();
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
+async function saveTrackingData(shipment, data) {
+  const { error } = await supabase.from("order_tracking").insert([
+    {
+      order_id: shipment.packages[0].content,
+      tracking_number: data.data[0].trackingNumber,
+    },
+  ]);
+  if (error) {
+    throw new Error("Error saving to Supabase: " + error.message);
+  }
+}
+
 // Add this function to save shipment data
 async function saveShipmentData(order, shipmentResponse, enviaData) {
   try {
@@ -20,6 +32,8 @@ async function saveShipmentData(order, shipmentResponse, enviaData) {
       .single();
 
     if (shipmentError) throw shipmentError;
+
+    await saveTrackingData(shipmentResponse, enviaData);
 
     // Insert shipping address
     // const { error: addressError } = await supabase.from("shipping_addresses").insert({
