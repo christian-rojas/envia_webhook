@@ -121,7 +121,7 @@ async function formatEnviaShipment(order) {
       name: order.customer.first_name + " " + order.customer.last_name,
       phone: order.customer.phone,
       email: order.customer.email,
-      street: order.shipping_address.address1,
+      street: order.shipping_address.address1 + (order.shipping_address.address2 ?? ""),
       city: order.shipping_address.city,
       state: order.shipping_address.province_code,
       country: order.shipping_address.country_code,
