@@ -8,7 +8,7 @@ async function saveTrackingData(shipment, data) {
   const { error } = await supabase.from("order_tracking").insert([
     {
       order_id: shipment.packages[0].content,
-      tracking_number: data.data[0].trackingNumber,
+      tracking_id: data.data[0].trackingNumber,
     },
   ]);
   if (error) {
