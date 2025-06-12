@@ -1,6 +1,7 @@
 const express = require("express");
 const crypto = require("crypto");
 const bodyParser = require("body-parser");
+const cors = require("cors");
 // import fetch from "node-fetch";
 const fetch = (...args) => import("node-fetch").then(({ default: fetch }) => fetch(...args));
 const { sendOrderConfirmationEmail } = require("./utils.js");
@@ -9,9 +10,12 @@ const dotenv = require("dotenv");
 const { saveShipmentData } = require("./supa.js");
 dotenv.config();
 
+// Permitir todas las solicitudes (modo abierto)
+
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
 const app = express();
+app.use(cors());
 // Use raw body parser for webhook validation
 app.use(
   bodyParser.json({
