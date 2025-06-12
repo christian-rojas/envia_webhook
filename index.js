@@ -16,6 +16,8 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANO
 
 const app = express();
 app.use(cors());
+// Servir archivos estáticos como proxy.html
+app.use(express.static(path.join(__dirname, "public")));
 // Use raw body parser for webhook validation
 app.use(
   bodyParser.json({
