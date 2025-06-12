@@ -264,4 +264,26 @@ app.post("/webhook/shopify", async (req, res) => {
   }
 });
 
+app.get("/tracking/:order_id", async (req, res) => {
+  const order_id = req.params.order_id;
+  try {
+    const { data, error } = await supabase.from("order_tracking").select("tracking_id").eq("order_id", order_id);
+    if (error) {
+      console.error(error);
+      res.status(500).send("No se encontró el número de seguimiento");
+    } else {
+      res.status(200).send(data);
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).send("Ocurrió un error al procesar la solicitud");
+  }
+});
+
+// Start the server
+// const PORT = process.env.PORT || 3000;
+// app.listen(PORT, () => {
+//   console.log(`Server is running on port ${PORT}`);
+// });
+
 module.exports = app;
