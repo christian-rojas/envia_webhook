@@ -335,7 +335,7 @@ app.get("/envia/:tracking_id", async (req, res) => {
 // });
 
 // Start the server
-const PORT = process.env.PORT || 3000;
+/*const PORT = process.env.PORT || 3000;
 app.listen(PORT, (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", {
@@ -343,6 +343,6 @@ app.listen(PORT, (req) => {
     });
   }
   console.log(`Server is running on port ${PORT}`);
-});
+});*/
 
-// module.exports = app;
+module.exports = app;
