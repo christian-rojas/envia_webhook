@@ -26,6 +26,10 @@ app.use(
   })
 );
 
+// app use public images folder
+app.use("/images", express.static("public/images"));
+// app use public folder
+
 const SHOPIFY_SECRET = process.env.SHOPIFY_SECRET;
 const ENVIA_API_KEY = process.env.ENVIA_API_KEY;
 
@@ -285,10 +289,45 @@ app.get("/tracking/:order_id", async (req, res) => {
   }
 });
 
-// Start the server
-// const PORT = process.env.PORT || 3000;
-// app.listen(PORT, () => {
-//   console.log(`Server is running on port ${PORT}`);
-// });
+app.get("/envia/:tracking_id", async (req, res) => {
+  const tracking_id = req.params.tracking_id;
+  console.log("tracking_id del envia", tracking_id);
 
-module.exports = app;
+  try {
+    const response = await fetch(`https://api.envia.com/ship/generaltrack`, {
+      method: "POST",
+      body: JSON.stringify({ trackingNumbers: [tracking_id] }),
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${ENVIA_API_KEY}`,
+      },
+    });
+
+    const data = await response.json();
+    console.log("data envia", data);
+    if (data.error) {
+      console.error(data.error);
+      res.status(500).send("No se encontró el número de seguimiento");
+    } else {
+      res.status(200).send(data);
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).send("Ocurrió un error al procesar la solicitud");
+  }
+});
+
+app.get("/", async (req, res) => {
+  // render public/index.html
+  res.sendFile(__dirname + "/public/index.html");
+
+  // res.send("Envia API is running");
+});
+
+// Start the server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
+
+// module.exports = app;
