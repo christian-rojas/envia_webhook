@@ -16,7 +16,14 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANO
 
 const app = express();
 app.use(express.json());
-app.use(cors({ origin: "https://mondano-tracking.vercel.app" }));
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+};
+// Manejar preflight requests (OPTIONS)
+
+app.use(cors(corsHeaders));
 // Servir archivos estáticos como proxy.html
 // Use raw body parser for webhook validation
 app.use(
@@ -329,7 +336,12 @@ app.get("/envia/:tracking_id", async (req, res) => {
 
 // Start the server
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", {
+      headers: corsHeaders,
+    });
+  }
   console.log(`Server is running on port ${PORT}`);
 });
 
