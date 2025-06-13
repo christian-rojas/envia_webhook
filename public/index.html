@@ -40,7 +40,7 @@
         document.getElementById("result").innerHTML =
           `<div class="alert alert-info">Buscando Order ID: <strong>${orderId}</strong></div>`;
         // Aquí puedes agregar la lógica para enviar el order_id al backend
-        fetch(`/tracking/${orderId}`)
+        fetch(`/api/tracking/${orderId}`)
           .then((response) => {
             if (!response.ok) {
               throw new Error("Order not found");
@@ -54,7 +54,7 @@
             const tracking_id = data[0].tracking_id;
             console.log("tracking_id: " + tracking_id);
 
-            fetch(`/envia/${tracking_id}`)
+            fetch(`/api/envia/${tracking_id}`)
               .then((response) => {
                 if (!response.ok) {
                   throw new Error("Tracking not found");

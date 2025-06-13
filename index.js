@@ -319,12 +319,12 @@ app.get("/envia/:tracking_id", async (req, res) => {
   }
 });
 
-app.get("/", async (req, res) => {
-  // render public/index.html
-  res.sendFile(__dirname + "/public/index.html");
+// app.get("/", async (req, res) => {
+//   // render public/index.html
+//   res.sendFile(__dirname + "/public/index.html");
 
-  // res.send("Envia API is running");
-});
+//   // res.send("Envia API is running");
+// });
 
 // Start the server
 // const PORT = process.env.PORT || 3000;
