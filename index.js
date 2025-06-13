@@ -275,6 +275,8 @@ app.post("/webhook/shopify", async (req, res) => {
 
 app.get("/tracking/:order_id", async (req, res) => {
   const order_id = req.params.order_id;
+  console.log("order_id del tracking", order_id);
+
   try {
     const { data, error } = await supabase.from("order_tracking").select("tracking_id").eq("order_id", order_id);
     if (error) {
@@ -325,9 +327,9 @@ app.get("/", async (req, res) => {
 });
 
 // Start the server
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+// const PORT = process.env.PORT || 3000;
+// app.listen(PORT, () => {
+//   console.log(`Server is running on port ${PORT}`);
+// });
 
 // module.exports = app;
