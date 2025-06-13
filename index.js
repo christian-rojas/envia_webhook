@@ -15,6 +15,7 @@ dotenv.config();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
 const app = express();
+app.use(express.json());
 app.use(cors());
 // Servir archivos estáticos como proxy.html
 // Use raw body parser for webhook validation
