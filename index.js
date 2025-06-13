@@ -16,7 +16,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANO
 
 const app = express();
 app.use(express.json());
-app.use(cors({ origin: "http://localhost:3000" }));
+app.use(cors({ origin: "https://mondano-tracking.vercel.app" }));
 // Servir archivos estáticos como proxy.html
 // Use raw body parser for webhook validation
 app.use(
