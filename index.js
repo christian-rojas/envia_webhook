@@ -27,7 +27,7 @@ app.use(
 );
 
 // app use public images folder
-app.use("/images", express.static("public/images"));
+// app.use("/images", express.static("public/images"));
 // app use public folder
 
 const SHOPIFY_SECRET = process.env.SHOPIFY_SECRET;
