@@ -273,8 +273,8 @@ app.post("/webhook/shopify", async (req, res) => {
   }
 });
 
-app.get("/tracking/:order_id", async (req, res) => {
-  const order_id = req.params.order_id;
+app.post("/tracking", async (req, res) => {
+  const order_id = req.body.order_id;
   console.log("order_id del tracking", order_id);
 
   try {
