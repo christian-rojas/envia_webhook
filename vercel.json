@@ -12,7 +12,7 @@
       "dest": "/index.js"
     },
     {
-      "src": "/tracking/:order_id",
+      "src": "/tracking/(.+)",
       "dest": "/index.js"
     }
   ],
