@@ -1,7 +1,7 @@
 const express = require("express");
 const crypto = require("crypto");
 const bodyParser = require("body-parser");
-const cors = require("cors");
+// const cors = require("cors");
 // import fetch from "node-fetch";
 const fetch = (...args) => import("node-fetch").then(({ default: fetch }) => fetch(...args));
 const { sendOrderConfirmationEmail } = require("./utils.js");
@@ -15,24 +15,24 @@ dotenv.config();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
 const app = express();
-app.use(express.json());
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-};
-// Manejar preflight requests (OPTIONS)
+// app.use(express.json());
+// const corsHeaders = {
+//   "Access-Control-Allow-Origin": "*",
+//   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+//   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+// };
+// // Manejar preflight requests (OPTIONS)
 
-app.use(cors(corsHeaders));
-app.options("*", cors(corsHeaders));
+// app.use(cors(corsHeaders));
+// app.options("*", cors(corsHeaders));
 // Middleware para manejar las solicitudes OPTIONS
-app.use((req, res, next) => {
-  if (req.method === "OPTIONS") {
-    res.set(corsHeaders);
-    return res.status(204).send("");
-  }
-  next();
-});
+// app.use((req, res, next) => {
+//   if (req.method === "OPTIONS") {
+//     res.set(corsHeaders);
+//     return res.status(204).send("");
+//   }
+//   next();
+// });
 // Servir archivos estáticos como proxy.html
 // Use raw body parser for webhook validation
 app.use(
@@ -58,8 +58,6 @@ function validateShopifyHmac(req) {
   const calculatedHmac = crypto.createHmac("sha256", SHOPIFY_SECRET).update(req.rawBody).digest("base64");
   return crypto.timingSafeEqual(Buffer.from(hmac), Buffer.from(calculatedHmac));
 }
-
-// Búsqueda de API de Código Postal para Chile
 
 // Función para obtener código postal por comuna
 async function getPostalCodeByCommune(address, commune) {
