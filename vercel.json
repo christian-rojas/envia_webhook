@@ -10,6 +10,10 @@
     {
       "src": "/webhook/shopify",
       "dest": "/index.js"
+    },
+    {
+      "src": "/tracking/(.*)",
+      "dest": "/index.js"
     }
   ]
 }
