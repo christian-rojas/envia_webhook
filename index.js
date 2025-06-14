@@ -23,7 +23,14 @@ const corsHeaders = {
 };
 // // Manejar preflight requests (OPTIONS)
 
-app.use(cors(corsHeaders));
+// app.use(cors(corsHeaders));
+app.use(
+  cors({
+    origin: "*",
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 // app.options("*", cors(corsHeaders));
 // Middleware para manejar las solicitudes OPTIONS
 app.use((req, res, next) => {
