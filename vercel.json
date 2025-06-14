@@ -10,6 +10,10 @@
     {
       "src": "/webhook/shopify",
       "dest": "/index.js"
+    },
+    {
+      "src": "/tracking/:order_id",
+      "dest": "/index.js"
     }
   ],
   "headers": [
