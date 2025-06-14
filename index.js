@@ -24,6 +24,15 @@ const corsHeaders = {
 // Manejar preflight requests (OPTIONS)
 
 app.use(cors(corsHeaders));
+app.options("*", cors(corsHeaders));
+// Middleware para manejar las solicitudes OPTIONS
+app.use((req, res, next) => {
+  if (req.method === "OPTIONS") {
+    res.set(corsHeaders);
+    return res.status(204).send("");
+  }
+  next();
+});
 // Servir archivos estáticos como proxy.html
 // Use raw body parser for webhook validation
 app.use(
