@@ -38,7 +38,7 @@ app.use((req, res, next) => {
 app.use(
   bodyParser.json({
     verify: (req, res, buf) => {
-      req.rawBody = buf.toString();
+      req.rawBody = buf ? buf.toString() : "";
     },
   })
 );
@@ -53,6 +53,7 @@ const ENVIA_API_KEY = process.env.ENVIA_API_KEY;
 // Validate Shopify HMAC
 function validateShopifyHmac(req) {
   const hmac = req.headers["x-shopify-hmac-sha256"];
+  if (!req.rawBody) return false; // Prevents undefined error
 
   const calculatedHmac = crypto.createHmac("sha256", SHOPIFY_SECRET).update(req.rawBody).digest("base64");
   return crypto.timingSafeEqual(Buffer.from(hmac), Buffer.from(calculatedHmac));
