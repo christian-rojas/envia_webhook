@@ -85,6 +85,31 @@ async function saveShipmentData(order, shipmentResponse, enviaData) {
   }
 }
 
+async function saveShipmentDataWithEnvia(order) {
+  try {
+    // Start a transaction using supabase
+    // Insert shipping address
+    const { error: addressError } = await supabase.from("shipping_addresses").insert({
+      name: `${order.shipping_address.first_name} ${order.shipping_address.last_name}`,
+      email: order.email,
+      phone: order.shipping_address.phone,
+      street:
+        order.shipping_address.address1 +
+        (order.shipping_address.address2 ? `, ${order.shipping_address.address2}` : ""),
+      number: order.shipping_address.number || "000001",
+      city: order.shipping_address.city,
+      state: order.shipping_address.province_code,
+      country: order.shipping_address.country_code,
+      postal_code: order.shipping_address.zip,
+    });
+    if (addressError) throw addressError;
+  } catch (error) {
+    console.error("Error saving shipment data:", error);
+    throw error;
+  }
+}
+
 module.exports = {
   saveShipmentData,
+  saveShipmentDataWithEnvia,
 };
