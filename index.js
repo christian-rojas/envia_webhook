@@ -4,10 +4,10 @@ const bodyParser = require("body-parser");
 const cors = require("cors");
 // import fetch from "node-fetch";
 const fetch = (...args) => import("node-fetch").then(({ default: fetch }) => fetch(...args));
-const { sendOrderConfirmationEmail } = require("./utils.js");
+const { sendOrderConfirmationEmail, reverseGeocode } = require("./utils.js");
 const { createClient } = require("@supabase/supabase-js");
 const dotenv = require("dotenv");
-const { saveShipmentData } = require("./supa.js");
+const { saveShipmentData, saveShipmentDataWithEnvia } = require("./supa.js");
 dotenv.config();
 
 // Permitir todas las solicitudes (modo abierto)
@@ -268,6 +268,19 @@ app.post("/webhook/shopify", async (req, res) => {
           console.error("Error sending email:", emailError);
         }
       }
+      reverseGeocode(order.shipping_address.latitude, order.shipping_address.longitude)
+        .then((data) => {
+          if (data && data.length > 0) {
+            const addressGeo = data.split(",")[0];
+            const zipGeo = data.split(",")[1];
+            order.shipping_address.zip = zipGeo;
+            order.shipping_address.address1 = addressGeo;
+            saveShipmentDataWithEnvia(order);
+          }
+        })
+        .catch((error) => {
+          console.error("Error in reverse geocoding:", error);
+        });
       res.status(200).send("Shipment created");
     }
     if (data.error) {

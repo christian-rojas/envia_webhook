@@ -1,6 +1,7 @@
 // Add this near the top of your file, after the other requires
 const nodemailer = require("nodemailer");
 const dotenv = require("dotenv");
+const { Client } = require("@googlemaps/google-maps-services-js");
 dotenv.config();
 
 // Add these constants with your other environment variables
@@ -39,8 +40,34 @@ async function sendOrderConfirmationEmail(order, data) {
   }
 }
 
+const client = new Client({});
+
+async function reverseGeocode(lat, lng) {
+  try {
+    const response = await client.reverseGeocode({
+      params: {
+        latlng: { latitude: lat, longitude: lng },
+        key: process.env.PLACES_API, // Make sure to replace this with your actual API key
+      },
+      timeout: 1000, // milliseconds
+    });
+
+    if (response.data.results && response.data.results.length > 0) {
+      console.log("Reverse Geocoding Results:", response.data.results[0].formatted_address);
+      return response.data.results[0].formatted_address;
+    } else {
+      console.log("No results found for the given coordinates.");
+      return null;
+    }
+  } catch (e) {
+    console.error("Error during reverse geocoding:", e.response ? e.response.data.error_message : e.message);
+    return null;
+  }
+}
+
 module.exports = {
   sendOrderConfirmationEmail,
+  reverseGeocode,
 };
 
 const order = {
