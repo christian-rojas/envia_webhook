@@ -10,8 +10,8 @@ const dotenv = require("dotenv");
 const { saveShipmentData, saveShipmentDataWithEnvia } = require("./supa.js");
 dotenv.config();
 
-const { nextSpeedInsights } = require("@vercel/speed-insights/next");
-nextSpeedInsights();
+const { injectSpeedInsights } = require("@vercel/speed-insights");
+injectSpeedInsights();
 const { inject } = require("@vercel/analytics");
 inject();
 
