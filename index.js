@@ -10,6 +10,11 @@ const dotenv = require("dotenv");
 const { saveShipmentData, saveShipmentDataWithEnvia } = require("./supa.js");
 dotenv.config();
 
+const { nextSpeedInsights } = require("@vercel/speed-insights/next");
+nextSpeedInsights();
+const { inject } = require("@vercel/analytics");
+inject();
+
 // Permitir todas las solicitudes (modo abierto)
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
@@ -108,6 +113,19 @@ async function formatEnviaShipment(order) {
   }
   if (!postalCode) {
     postalCode = (await getPostalCodeByCommune(address, commune)) || null;
+    if (!postalCode) {
+      reverseGeocode(order.shipping_address.latitude, order.shipping_address.longitude)
+        .then((data) => {
+          if (data && data.length > 0) {
+            const zipCode = data[0].address_components.find((component) => component.types.includes("postal_code"));
+            order.shipping_address.zip = zipCode.short_name;
+            postalCode = zipCode.short_name;
+          }
+        })
+        .catch((error) => {
+          console.error("Error in reverse geocoding:", error);
+        });
+    }
   }
 
   let dimension = {

@@ -10,6 +10,8 @@
   "dependencies": {
     "@googlemaps/google-maps-services-js": "^3.4.1",
     "@supabase/supabase-js": "^2.49.9",
+    "@vercel/analytics": "^1.5.0",
+    "@vercel/speed-insights": "^1.2.0",
     "body-parser": "^1.20.2",
     "cors": "^2.8.5",
     "crypto": "^1.0.1",
