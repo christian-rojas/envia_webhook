@@ -252,10 +252,10 @@ async function createEnviaShipment(shipment) {
 async function sendMessage(order) {
   //   const order = req.body;
   const customerName = order.customer.first_name;
-  const phone = order.shipping_address.phone;
-  phone.trim(); // debe tener formato internacional, e.g. +569XXXXXXX
+  let phone = order.shipping_address.phone;
+  phone = phone.replace(/\s+/g, ""); // Remove all spaces from the phone number
 
-  console.log("phone", phone.trim());
+  console.log("phone", phone);
 
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
