@@ -255,13 +255,15 @@ async function sendMessage(order) {
   const phone = order.shipping_address.phone;
   phone.trim(); // debe tener formato internacional, e.g. +569XXXXXXX
 
+  console.log("phone", phone.trim());
+
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const client = twilio(accountSid, authToken);
 
   const message = await client.messages.create({
     body: `Hola ${customerName}, tu pedido #${order.order_number} fue recibido. ¡Gracias por preferirnos!`,
-    to: `whatsapp:+56${phone}`,
+    to: `whatsapp:+56981831013`,
     from: "whatsapp:+14155238886",
   });
   return message;
