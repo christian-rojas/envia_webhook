@@ -252,7 +252,8 @@ async function createEnviaShipment(shipment) {
 async function sendMessage(order) {
   //   const order = req.body;
   const customerName = order.customer.first_name;
-  const phone = order.shipping_address.phone; // debe tener formato internacional, e.g. +569XXXXXXX
+  const phone = order.shipping_address.phone;
+  phone.trim(); // debe tener formato internacional, e.g. +569XXXXXXX
 
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -260,7 +261,7 @@ async function sendMessage(order) {
 
   const message = await client.messages.create({
     body: `Hola ${customerName}, tu pedido #${order.order_number} fue recibido. ¡Gracias por preferirnos!`,
-    to: `whatsapp:+56${phone.trim()}`,
+    to: `whatsapp:+56${phone}`,
     from: "whatsapp:+14155238886",
   });
   return message;
