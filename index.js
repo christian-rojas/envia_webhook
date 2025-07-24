@@ -248,6 +248,23 @@ async function createEnviaShipment(shipment) {
   }
 }
 
+async function sendMessage(order) {
+  //   const order = req.body;
+  const customerName = order.customer.first_name;
+  const phone = order.customer.phone; // debe tener formato internacional, e.g. +569XXXXXXX
+
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const client = twilio(accountSid, authToken);
+
+  const message = await client.messages.create({
+    body: `Hola ${customerName}, tu pedido #${order.order_number} fue recibido. ¡Gracias por preferirnos!`,
+    to: `whatsapp:+${phone}`,
+    from: "whatsapp:+14155238886",
+  });
+  return message;
+}
+
 // Webhook handler
 app.post("/webhook/shopify", async (req, res) => {
   if (!validateShopifyHmac(req)) {
@@ -256,6 +273,12 @@ app.post("/webhook/shopify", async (req, res) => {
 
   const order = req.body;
   console.log(JSON.stringify(order, null, 2));
+
+  try {
+    await sendMessage(order);
+  } catch (error) {
+    console.error("error on sending message by twillio:", error);
+  }
 
   try {
     // Now we need to await the formatEnviaShipment function
