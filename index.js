@@ -263,8 +263,8 @@ async function sendMessage(order) {
 
   const message = await client.messages.create({
     body: `Hola ${customerName}, tu pedido #${order.order_number} fue recibido. ¡Gracias por preferirnos!`,
-    to: `whatsapp:+56981831013`,
-    from: "whatsapp:+14155238886",
+    to: `whatsapp:+56${phone}`,
+    from: "whatsapp:+15557634616",
   });
   return message;
 }
@@ -280,6 +280,7 @@ app.post("/webhook/shopify", async (req, res) => {
 
   try {
     await sendMessage(order);
+    console.log(JSON.stringify("Mensaje enviado exitosamente"));
   } catch (error) {
     console.error("error on sending message by twillio:", error);
   }
