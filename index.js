@@ -267,7 +267,11 @@ async function sendMessage(order) {
   const client = twilio(accountSid, authToken);
 
   const message = await client.messages.create({
-    body: `Hola ${customerName}, tu pedido #${order.order_number} fue recibido. ¡Gracias por preferirnos!`,
+    contentSid: process.env.WHATSAPP_TEMPLATE_SID, // Add this to your .env file
+    contentVariables: JSON.stringify({
+      1: customerName,
+      2: order.order_number,
+    }),
     to: `whatsapp:${phone}`,
     from: "whatsapp:+15557634616",
   });
