@@ -269,8 +269,8 @@ async function sendMessage(order) {
   const message = await client.messages.create({
     contentSid: process.env.WHATSAPP_TEMPLATE_SID, // Add this to your .env file
     contentVariables: JSON.stringify({
-      1: customerName,
-      2: order.order_number,
+      "1": customerName,
+      "2": order.order_number,
     }),
     to: `whatsapp:${phone}`,
     from: "whatsapp:+15557634616",
