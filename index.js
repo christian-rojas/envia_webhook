@@ -266,6 +266,8 @@ async function sendMessage(order) {
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const client = twilio(accountSid, authToken);
 
+  console.log("Enviando mensaje a:", customerName, order.order_number);
+
   const message = await client.messages.create({
     contentSid: process.env.WHATSAPP_TEMPLATE_SID, // Add this to your .env file
     contentVariables: JSON.stringify({
