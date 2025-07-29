@@ -257,13 +257,18 @@ async function sendMessage(order) {
 
   console.log("phone", phone);
 
+  // check if the phone variable has prefix == +56 if not add it
+  if (!phone.startsWith("+56")) {
+    phone = "+56" + phone;
+  }
+
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const client = twilio(accountSid, authToken);
 
   const message = await client.messages.create({
     body: `Hola ${customerName}, tu pedido #${order.order_number} fue recibido. ¡Gracias por preferirnos!`,
-    to: `whatsapp:+56${phone}`,
+    to: `whatsapp:${phone}`,
     from: "whatsapp:+15557634616",
   });
   return message;
