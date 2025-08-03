@@ -209,7 +209,7 @@ async function formatEnviaShipment(order) {
 }
 
 // Create shipment in Envia
-async function createEnviaShipment(shipment) {
+async function createEnviaShipment(shipment, order) {
   console.log("entra en el fetch");
   const { data, error } = await supabase.from("shipments").select("shopify_order_id").eq("status", "generated");
   if (data.length > 0) {
@@ -232,6 +232,13 @@ async function createEnviaShipment(shipment) {
     }
   }
   console.log("found false");
+
+  try {
+    await sendMessage(order);
+    console.log(JSON.stringify("Mensaje enviado exitosamente"));
+  } catch (error) {
+    console.error("error on sending message by twillio:", error);
+  }
 
   try {
     const response = await fetch("https://api.envia.com/ship/generate", {
@@ -275,7 +282,7 @@ async function sendMessage(order) {
     contentSid: whatsappTemplate, // Add this to your .env file
     contentVariables: {
       name: customerName,
-      order_id: order.order_number,
+      order_id: String(order.order_number).toUpperCase(),
     },
     to: `whatsapp:${phone}`,
     from: "whatsapp:+15557634616",
@@ -293,20 +300,13 @@ app.post("/webhook/shopify", async (req, res) => {
   console.log(JSON.stringify(order, null, 2));
 
   try {
-    await sendMessage(order);
-    console.log(JSON.stringify("Mensaje enviado exitosamente"));
-  } catch (error) {
-    console.error("error on sending message by twillio:", error);
-  }
-
-  try {
     // Now we need to await the formatEnviaShipment function
     const shipment = await formatEnviaShipment(order);
     console.log("el shipment", JSON.stringify(shipment));
 
     console.log("after shipment");
     // Send to Envia API
-    const response = await createEnviaShipment(shipment);
+    const response = await createEnviaShipment(shipment, order);
 
     if (response.error) {
       res.status(500).send(response.error.message);
@@ -348,7 +348,7 @@ app.post("/webhook/shopify", async (req, res) => {
       try {
         await sendOrderConfirmationEmail(shipment.packages[0].content, data.error?.message ?? "error");
         shipment.shipment.service = "extended";
-        const responseExtended = await createEnviaShipment(shipment);
+        const responseExtended = await createEnviaShipment(shipment, order);
         if (responseExtended.meta === "generate") {
           try {
             await saveShipmentData(order, shipment, responseExtended);
