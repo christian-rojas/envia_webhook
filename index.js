@@ -563,6 +563,28 @@ async function handleInboundMessage(message, sender = meta.sendTextMessage) {
 // ---------------------------------------------------------------------------
 
 /**
+ * GET /webhook/instagram
+ * Handshake de verificacion de Meta. Meta envia un GET con:
+ *   ?hub.mode=subscribe&hub.verify_token=<token>&hub.challenge=<challenge>
+ * Hay que devolver el challenge en el body con status 200. Si no, Meta
+ * muestra "No se pudo validar la URL de devolucion de llamada o el token
+ * de verificacion".
+ */
+app.get("/webhook/instagram", (req, res) => {
+  const result = meta.handleVerification(req.query, META_VERIFY_TOKEN);
+  if (result.status === 200) {
+    console.log("[instagram] webhook verificado");
+  } else {
+    console.warn(
+      "[instagram] verificacion fallida:",
+      "modo=" + (req.query["hub.mode"] || "?") +
+        " token_coincide=" + (req.query["hub.verify_token"] === META_VERIFY_TOKEN)
+    );
+  }
+  return res.status(result.status).send(result.body);
+});
+
+/**
  * POST /webhook/instagram
  * Mismo mecanismo que WhatsApp: se verifica la firma con el App Secret y se
  * responde 200 de inmediato para que Meta no reintente.
