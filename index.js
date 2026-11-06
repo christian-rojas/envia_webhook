@@ -443,6 +443,18 @@ app.listen(PORT, (req) => {
 const META_VERIFY_TOKEN = process.env.META_VERIFY_TOKEN;
 const META_APP_SECRET = process.env.META_APP_SECRET;
 
+// Aviso al arrancar si falta alguna credencial, para no tener que debuggear
+// un fallo silencioso mas adelante.
+if (!meta.isConfigured(META_APP_SECRET) || !meta.isConfigured(process.env.META_ACCESS_TOKEN)) {
+  console.warn(
+    "[meta] AVISO: META_APP_SECRET / META_ACCESS_TOKEN sin configurar. " +
+      "El webhook rechazara los mensajes hasta completar la configuracion."
+  );
+}
+if (!meta.isConfigured(process.env.XAI_API_KEY)) {
+  console.warn("[meta] AVISO: XAI_API_KEY sin configurar. El agente no podra responder.");
+}
+
 /**
  * GET /webhook/meta
  * Handshake de verificacion de Meta. Meta envia:

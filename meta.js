@@ -15,6 +15,23 @@ const crypto = require("crypto");
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION || "v23.0";
 
 /**
+ * Valor centinela usado al desplegar la variable de entorno antes de tener el
+ * valor real. Evita que el bot intente enviar mensajes con credenciales
+ * falsas y genere errores confusos en Meta.
+ */
+const PLACEHOLDER = "PENDIENTE";
+
+/**
+ * Indica si una credencial esta realmente configurada.
+ *
+ * @param {string|undefined} value Valor de la variable de entorno.
+ * @returns {boolean}
+ */
+function isConfigured(value) {
+  return Boolean(value && value !== PLACEHOLDER && value.trim() !== "");
+}
+
+/**
  * Verifica la firma del webhook de Meta sobre el body crudo.
  *
  * Meta firma con HMAC-SHA256 usando el App Secret como clave y envia el
@@ -28,7 +45,7 @@ const GRAPH_VERSION = process.env.META_GRAPH_VERSION || "v23.0";
  * @returns {boolean} true si la firma es valida.
  */
 function verifyMetaSignature(rawBody, signature, appSecret) {
-  if (!rawBody || !signature || !appSecret) return false;
+  if (!rawBody || !signature || !isConfigured(appSecret)) return false;
 
   const expected = crypto.createHmac("sha256", appSecret).update(rawBody, "utf8").digest("hex");
   const received = String(signature).replace(/^sha256=/, "");
@@ -117,8 +134,12 @@ async function sendTextMessage(to, body, options = {}) {
   const accessToken = options.accessToken || process.env.META_ACCESS_TOKEN;
   const graphVersion = options.graphVersion || GRAPH_VERSION;
 
-  if (!phoneNumberId || !accessToken) {
-    return { ok: false, status: 500, error: "Faltan META_PHONE_NUMBER_ID o META_ACCESS_TOKEN" };
+  if (!isConfigured(phoneNumberId) || !isConfigured(accessToken)) {
+    return {
+      ok: false,
+      status: 500,
+      error: "META_PHONE_NUMBER_ID o META_ACCESS_TOKEN no configurados (placeholder o vacio)",
+    };
   }
 
   const cleanTo = String(to).replace(/\D/g, "");
@@ -156,6 +177,7 @@ async function sendTextMessage(to, body, options = {}) {
 
 module.exports = {
   GRAPH_VERSION,
+  isConfigured,
   verifyMetaSignature,
   handleVerification,
   parseInboundMessages,

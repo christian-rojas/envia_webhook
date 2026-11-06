@@ -112,8 +112,8 @@ async function generateReply({ userText, context, apiKey, model }) {
   const key = apiKey || process.env.XAI_API_KEY;
   const modelId = model || XAI_MODEL;
 
-  if (!key) {
-    return { ok: false, reply: "", error: "Falta XAI_API_KEY" };
+  if (!key || key === "PENDIENTE" || !key.trim()) {
+    return { ok: false, reply: "", error: "XAI_API_KEY no configurado (placeholder o vacio)" };
   }
 
   const prompt = `CONTEXTO DEL PEDIDO:\n${context || "(sin contexto)"}\n\n---\nMENSAJE DEL CLIENTE:\n${userText}`;
