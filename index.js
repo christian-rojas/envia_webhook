@@ -69,10 +69,19 @@ const ENVIA_API_KEY = process.env.ENVIA_API_KEY;
 // Validate Shopify HMAC
 function validateShopifyHmac(req) {
   const hmac = req.headers["x-shopify-hmac-sha256"];
-  if (!req.rawBody) return false; // Prevents undefined error
+  if (!req.rawBody || !hmac || !SHOPIFY_SECRET) return false; // Prevents undefined error
 
   const calculatedHmac = crypto.createHmac("sha256", SHOPIFY_SECRET).update(req.rawBody).digest("base64");
-  return crypto.timingSafeEqual(Buffer.from(hmac), Buffer.from(calculatedHmac));
+
+  // crypto.timingSafeEqual lanza RangeError si los buffers tienen distinta
+  // longitud. Sin esta comprobacion, una firma invalida con longitud
+  // diferente provoca una excepcion no capturada y la funcion queda
+  // colgada hasta el timeout de Vercel (300s) en vez de devolver 401.
+  const hmacBuf = Buffer.from(hmac);
+  const calculatedBuf = Buffer.from(calculatedHmac);
+  if (hmacBuf.length !== calculatedBuf.length) return false;
+
+  return crypto.timingSafeEqual(hmacBuf, calculatedBuf);
 }
 
 // Función para obtener código postal por comuna
