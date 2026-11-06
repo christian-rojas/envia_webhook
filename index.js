@@ -9,6 +9,9 @@ const { sendOrderConfirmationEmail, reverseGeocode } = require("./utils.js");
 const { createClient } = require("@supabase/supabase-js");
 const dotenv = require("dotenv");
 const { saveShipmentData, saveShipmentDataWithEnvia } = require("./supa.js");
+const meta = require("./meta.js");
+const ai = require("./ai.js");
+const orders = require("./orders.js");
 dotenv.config();
 
 const { injectSpeedInsights } = require("@vercel/speed-insights");
@@ -432,5 +435,114 @@ app.listen(PORT, (req) => {
   }
   console.log(`Server is running on port ${PORT}`);
 });*/
+
+// ---------------------------------------------------------------------------
+// Webhook de WhatsApp Cloud API (Meta) + agente de IA
+// ---------------------------------------------------------------------------
+
+const META_VERIFY_TOKEN = process.env.META_VERIFY_TOKEN;
+const META_APP_SECRET = process.env.META_APP_SECRET;
+
+/**
+ * GET /webhook/meta
+ * Handshake de verificacion de Meta. Meta envia:
+ *   ?hub.mode=subscribe&hub.verify_token=<token>&hub.challenge=<challenge>
+ * Hay que devolver el challenge en el body con status 200.
+ */
+app.get("/webhook/meta", (req, res) => {
+  const result = meta.handleVerification(req.query, META_VERIFY_TOKEN);
+  if (result.status === 200) {
+    console.log("[meta] webhook verificado");
+  } else {
+    console.warn("[meta] verificacion fallida");
+  }
+  return res.status(result.status).send(result.body);
+});
+
+/**
+ * POST /webhook/meta
+ * Llega un mensaje entrante. Meta exige respuesta rapida (reintenta si
+ * tarda), asi que se responde 200 de inmediato y el trabajo real se hace
+ * despues, sin await.
+ */
+app.post("/webhook/meta", (req, res) => {
+  const signature = req.headers["x-hub-signature-256"];
+
+  if (!meta.verifyMetaSignature(req.rawBody, signature, META_APP_SECRET)) {
+    console.warn("[meta] firma invalida, request rechazado");
+    return res.status(401).send("Invalid signature");
+  }
+
+  const messages = meta.parseInboundMessages(req.body);
+  console.log(`[meta] ${messages.length} mensaje(s) entrante(s)`);
+
+  // Se responde ya para que Meta no reintente. El procesamiento sigue.
+  res.status(200).send("EVENT_RECEIVED");
+
+  for (const message of messages) {
+    handleInboundMessage(message).catch((error) => {
+      console.error("[meta] error procesando mensaje:", error.message);
+    });
+  }
+});
+
+/**
+ * Logica principal: resuelve el pedido, arma el contexto y responde con IA.
+ *
+ * @param {object} message Mensaje normalizado del webhook de Meta.
+ */
+async function handleInboundMessage(message) {
+  const { from, text, profileName } = message;
+  console.log(`[meta] mensaje de ${from}: ${text}`);
+
+  // 1) Si pide hablar con una persona, se escala sin preguntar nada.
+  if (ai.wantsHuman(text)) {
+    await meta.sendTextMessage(
+      from,
+      "Te paso con un asesor de Mondano que te va a ayudar. " +
+        "Puedes contactarnos también al +56 9 9689 1362 o por contacto@mondano.cl"
+    );
+    console.log("[meta] escalado a humano por intencion explicita");
+    return;
+  }
+
+  // 2) Resolver pedido: por numero de pedido en el texto o por telefono.
+  const { shipment, orderId, reason } = await orders.findShipment({
+    phone: from,
+    text,
+  });
+
+  console.log(`[meta] busqueda: reason=${reason} orderId=${orderId || "n/d"}`);
+
+  // 3) Armar contexto para la IA.
+  let context;
+  if (shipment) {
+    context = ai.buildShipmentContext(shipment);
+  } else if (orderId) {
+    context =
+      `No se encontro informacion de envio para el pedido ${orderId}. ` +
+      `El pedido puede no tener envio generado todavia.`;
+  } else {
+    context =
+      "No se encontro ningun pedido asociado a este numero de telefono. " +
+      "Pide al cliente el numero de pedido (formato MON-XXXX).";
+  }
+
+  // 4) Respuesta de la IA.
+  const { ok, reply, error } = await ai.generateReply({ userText: text, context });
+
+  if (!ok) {
+    console.error("[meta] error de IA:", error);
+    await meta.sendTextMessage(
+      from,
+      "Tuve problemas para responder en este momento. " +
+        "Por favor contacta a nuestro equipo al +56 9 9689 1362 o contacto@mondano.cl"
+    );
+    return;
+  }
+
+  await meta.sendTextMessage(from, reply);
+  console.log(`[meta] respuesta enviada a ${from}: ${reply}`);
+}
 
 module.exports = app;

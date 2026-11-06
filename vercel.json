@@ -12,6 +12,10 @@
       "dest": "/index.js"
     },
     {
+      "src": "/webhook/meta",
+      "dest": "/index.js"
+    },
+    {
       "src": "/tracking/(.*)",
       "dest": "/index.js"
     },
