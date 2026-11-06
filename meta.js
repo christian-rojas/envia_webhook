@@ -161,29 +161,39 @@ function parseInstagramMessages(payload) {
 /**
  * Envia un mensaje de texto por Instagram Messaging API.
  *
+ * Hay dos formas equivalentes segun como se configuro la app:
+ *  - `POST /me/messages`             -> Facebook Login / Unified Login (usa el token)
+ *  - `POST /{IG_ACCOUNT_ID}/messages` -> cuando se tiene el IG Account ID
+ *
+ * Se usa la primera por defecto y la segunda si se configura
+ * META_INSTAGRAM_ACCOUNT_ID.
+ *
  * A diferencia de WhatsApp, Instagram no tiene ventana de atencion de 24h:
  * se puede responder cuando se quiera. Aun asi, Meta aplica la politica de
  * la cuenta: responder fuera de la ventana requiere estar en Advanced Access
  * con el feature Human Agent habilitado.
  *
- * @param {string} recipientId Instagram Account ID (IGSID) del destinatario.
- * @param {string} body Texto del mensaje.
- * @param {object} [options] Opciones: { accessToken, graphVersion }.
+ * @param {string} recipientId IGSID del destinatario (quien escribio).
+ * @param {string} body Texto del mensaje (max 1000 caracteres).
+ * @param {object} [options] Opciones: { accessToken, graphVersion, accountId }.
  * @returns {Promise<{ok: boolean, status: number, data?: object, error?: string}>}
  */
 async function sendInstagramMessage(recipientId, body, options = {}) {
   const accessToken = options.accessToken || process.env.META_ACCESS_TOKEN;
   const graphVersion = options.graphVersion || GRAPH_VERSION;
+  const accountId = options.accountId || process.env.META_INSTAGRAM_ACCOUNT_ID;
 
   if (!isConfigured(recipientId) || !isConfigured(accessToken)) {
     return {
       ok: false,
       status: 500,
-      error: "Instagram Account ID o META_ACCESS_TOKEN no configurados",
+      error: "IGSID del destinatario o META_ACCESS_TOKEN no configurados",
     };
   }
 
-  const url = `https://graph.facebook.com/${graphVersion}/me/messages`;
+  // Con IG Account ID se usa /{id}/messages; si no, /me/messages.
+  const target = isConfigured(accountId) ? accountId : "me";
+  const url = `https://graph.facebook.com/${graphVersion}/${target}/messages`;
 
   try {
     const response = await fetch(url, {
