@@ -14,6 +14,17 @@ const ai = require("./ai.js");
 const orders = require("./orders.js");
 dotenv.config();
 
+// Log global de errores no capturados: sin esto, una excepcion en una
+// promesa flotante se pierde silenciosamente en Vercel.
+process.on("unhandledRejection", (reason) => {
+  console.error("[global] unhandledRejection:", reason && reason.message ? reason.message : reason);
+  if (reason && reason.stack) console.error("[global] stack:", reason.stack.split("\n").slice(0, 5).join(" | "));
+});
+process.on("uncaughtException", (err) => {
+  console.error("[global] uncaughtException:", err && err.message ? err.message : err);
+  if (err && err.stack) console.error("[global] stack:", err.stack.split("\n").slice(0, 5).join(" | "));
+});
+
 const { injectSpeedInsights } = require("@vercel/speed-insights");
 injectSpeedInsights();
 const { inject } = require("@vercel/analytics");
@@ -601,7 +612,7 @@ app.get("/webhook/instagram", (req, res) => {
  * A diferencia de WhatsApp, aqui el destinatario de la respuesta es el
  * Instagram Account ID (viene en recipient.id), no el id del usuario.
  */
-app.post("/webhook/instagram", (req, res) => {
+app.post("/webhook/instagram", async (req, res) => {
   const signature = req.headers["x-hub-signature-256"];
 
   if (!meta.verifyMetaSignature(req.rawBody, signature, META_APP_SECRET)) {
@@ -612,18 +623,37 @@ app.post("/webhook/instagram", (req, res) => {
   const messages = meta.parseInstagramMessages(req.body);
   console.log(`[instagram] ${messages.length} mensaje(s) entrante(s)`);
 
-  res.status(200).send("EVENT_RECEIVED");
+  // Meta exige responder en menos de 5 segundos, asi que se responde de
+  // inmediato. En Vercel, las promesas que quedan pendientes despues de
+  // res.send() se hibernate y nunca se resuelven: por eso se usa
+  // waitUntil() de @vercel/functions, que mantiene viva la funcion.
+  const waitUntil = req.waitUntil ? req.waitUntil.bind(req) : null;
 
-  for (const message of messages) {
-    // El "from" para buscar pedidos es el id del usuario, pero la respuesta
+  const tasks = messages.map(async (message) => {
+    // El "from" sirve para buscar pedidos por telefono (WhatsApp); en
+    // Instagram el id de usuario no es un telefono, asi que la respuesta
     // va al Instagram Account ID.
     const sender = (to, body) =>
-      meta.sendInstagramMessage(message.instagramAccountId, body);
+      meta.sendInstagramMessage(message.instagramAccountId, body, {
+        igUserId: message.igUserId,
+      });
+    try {
+      await handleInstagramMessage(message, sender);
+    } catch (error) {
+      console.error("[instagram] ERROR procesando mensaje:", error.message);
+      console.error("[instagram] stack:", (error.stack || "").split("\n").slice(0, 4).join(" | "));
+    }
+  });
 
-    handleInstagramMessage(message, sender).catch((error) => {
-      console.error("[instagram] error procesando mensaje:", error.message);
-    });
+  const task = Promise.all(tasks);
+  if (waitUntil) {
+    waitUntil(task);
+  } else {
+    // Fallback: si no hay waitUntil, se procesa antes de responder.
+    await task;
   }
+
+  res.status(200).send("EVENT_RECEIVED");
 });
 
 /**
@@ -636,6 +666,7 @@ app.post("/webhook/instagram", (req, res) => {
  */
 async function handleInstagramMessage(message, sender) {
   const { text } = message;
+  const t0 = Date.now();
   console.log(`[instagram] mensaje: ${text}`);
 
   if (ai.wantsHuman(text)) {
@@ -652,7 +683,12 @@ async function handleInstagramMessage(message, sender) {
 
   let shipment = null;
   if (orderId) {
-    shipment = await orders.findShipmentByOrderId(orderId);
+    try {
+      shipment = await orders.findShipmentByOrderId(orderId);
+      console.log(`[instagram] shipment: ${shipment ? shipment.status : "no encontrado"}`);
+    } catch (error) {
+      throw error;
+    }
   }
 
   let context;
@@ -680,8 +716,8 @@ async function handleInstagramMessage(message, sender) {
     return;
   }
 
-  await sender(message.instagramAccountId, reply);
-  console.log(`[instagram] respuesta enviada: ${reply}`);
+  const sent = await sender(message.instagramAccountId, reply);
+  if (sent && sent.ok === false) console.error("[instagram] error enviando:", sent.error);
 }
 
 module.exports = app;

@@ -133,6 +133,11 @@ function parseInstagramMessages(payload) {
   const out = [];
 
   for (const entry of payload?.entry || []) {
+    // El ig-user-id de la PROPIA cuenta llega en entry[].id. Es el id con el
+    // que hay que hacer POST /{ig-user-id}/messages para responder. No se
+    // puede adivinar ni descubrir por API: hay que tomarlo del webhook.
+    const igUserId = entry.id || null;
+
     // `messaging` es la clave de Instagram; `changes` es la de WhatsApp.
     for (const messaging of entry.messaging || []) {
       const message = messaging.message || {};
@@ -149,7 +154,10 @@ function parseInstagramMessages(payload) {
         text: String(message.text).trim(),
         timestamp: messaging.timestamp ? Number(messaging.timestamp) : null,
         // Para Instagram el destinatario es el IG Account ID.
-        instagramAccountId: messaging.recipient?.id || entry.id || null,
+        // Para Instagram el destinatario es el Instagram-scoped ID del usuario.
+        instagramAccountId: messaging.recipient?.id || igUserId || null,
+        // ig-user-id de la cuenta de negocio, para el endpoint de envio.
+        igUserId,
         rawType: "text",
       });
     }
@@ -181,7 +189,9 @@ function parseInstagramMessages(payload) {
 async function sendInstagramMessage(recipientId, body, options = {}) {
   const accessToken = options.accessToken || process.env.META_ACCESS_TOKEN;
   const graphVersion = options.graphVersion || GRAPH_VERSION;
-  const accountId = options.accountId || process.env.META_INSTAGRAM_ACCOUNT_ID;
+  // El ig-user-id puede venir del webhook (entry[].id) o de la env.
+  const accountId =
+    options.accountId || process.env.META_INSTAGRAM_ACCOUNT_ID || options.igUserId;
 
   if (!isConfigured(recipientId) || !isConfigured(accessToken)) {
     return {
@@ -191,9 +201,19 @@ async function sendInstagramMessage(recipientId, body, options = {}) {
     };
   }
 
-  // Con IG Account ID se usa /{id}/messages; si no, /me/messages.
-  const target = isConfigured(accountId) ? accountId : "me";
-  const url = `https://graph.facebook.com/${graphVersion}/${target}/messages`;
+  if (!isConfigured(accountId)) {
+    return {
+      ok: false,
+      status: 500,
+      error:
+        "No se conoce el ig-user-id de la cuenta. Llega en entry[].id del webhook; " +
+        "configura META_INSTAGRAM_ACCOUNT_ID como fallback.",
+    };
+  }
+
+  // Con ig-user-id se usa /{ig-user-id}/messages (endpoint de Instagram
+  // Messaging). /me/messages corresponde al flujo de Facebook Login.
+  const url = `https://graph.facebook.com/${graphVersion}/${accountId}/messages`;
 
   try {
     const response = await fetch(url, {

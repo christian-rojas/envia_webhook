@@ -6,26 +6,10 @@
       "use": "@vercel/node"
     }
   ],
-  "routes": [
+  "rewrites": [
     {
-      "src": "/webhook/shopify",
-      "dest": "/index.js"
-    },
-    {
-      "src": "/webhook/meta",
-      "dest": "/index.js"
-    },
-    {
-      "src": "/webhook/instagram",
-      "dest": "/index.js"
-    },
-    {
-      "src": "/tracking/(.*)",
-      "dest": "/index.js"
-    },
-    {
-      "src": "/envia/(.*)",
-      "dest": "/index.js"
+      "source": "/(.*)",
+      "destination": "/index.js"
     }
   ]
 }
