@@ -502,14 +502,15 @@ app.post("/webhook/meta", (req, res) => {
  * Logica principal: resuelve el pedido, arma el contexto y responde con IA.
  *
  * @param {object} message Mensaje normalizado del webhook de Meta.
+ * @param {Function} sender Funcion para enviar la respuesta (WhatsApp o IG).
  */
-async function handleInboundMessage(message) {
-  const { from, text, profileName } = message;
+async function handleInboundMessage(message, sender = meta.sendTextMessage) {
+  const { from, text } = message;
   console.log(`[meta] mensaje de ${from}: ${text}`);
 
   // 1) Si pide hablar con una persona, se escala sin preguntar nada.
   if (ai.wantsHuman(text)) {
-    await meta.sendTextMessage(
+    await sender(
       from,
       "Te paso con un asesor de Mondano que te va a ayudar. " +
         "Puedes contactarnos también al +56 9 9689 1362 o por contacto@mondano.cl"
@@ -545,7 +546,7 @@ async function handleInboundMessage(message) {
 
   if (!ok) {
     console.error("[meta] error de IA:", error);
-    await meta.sendTextMessage(
+    await sender(
       from,
       "Tuve problemas para responder en este momento. " +
         "Por favor contacta a nuestro equipo al +56 9 9689 1362 o contacto@mondano.cl"
@@ -553,8 +554,103 @@ async function handleInboundMessage(message) {
     return;
   }
 
-  await meta.sendTextMessage(from, reply);
+  await sender(from, reply);
   console.log(`[meta] respuesta enviada a ${from}: ${reply}`);
+}
+
+// ---------------------------------------------------------------------------
+// Webhook de Instagram Messaging API (Meta)
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /webhook/instagram
+ * Mismo mecanismo que WhatsApp: se verifica la firma con el App Secret y se
+ * responde 200 de inmediato para que Meta no reintente.
+ *
+ * A diferencia de WhatsApp, aqui el destinatario de la respuesta es el
+ * Instagram Account ID (viene en recipient.id), no el id del usuario.
+ */
+app.post("/webhook/instagram", (req, res) => {
+  const signature = req.headers["x-hub-signature-256"];
+
+  if (!meta.verifyMetaSignature(req.rawBody, signature, META_APP_SECRET)) {
+    console.warn("[instagram] firma invalida, request rechazado");
+    return res.status(401).send("Invalid signature");
+  }
+
+  const messages = meta.parseInstagramMessages(req.body);
+  console.log(`[instagram] ${messages.length} mensaje(s) entrante(s)`);
+
+  res.status(200).send("EVENT_RECEIVED");
+
+  for (const message of messages) {
+    // El "from" para buscar pedidos es el id del usuario, pero la respuesta
+    // va al Instagram Account ID.
+    const sender = (to, body) =>
+      meta.sendInstagramMessage(message.instagramAccountId, body);
+
+    handleInstagramMessage(message, sender).catch((error) => {
+      console.error("[instagram] error procesando mensaje:", error.message);
+    });
+  }
+});
+
+/**
+ * Procesa un mensaje de Instagram. Reusa la logica del agente, pero la
+ * busqueda de pedidos no puede usar el id numerico del usuario de Instagram
+ * como telefono, asi que se exige el numero de pedido en el texto.
+ *
+ * @param {object} message Mensaje normalizado.
+ * @param {Function} sender Funcion para enviar la respuesta.
+ */
+async function handleInstagramMessage(message, sender) {
+  const { text } = message;
+  console.log(`[instagram] mensaje: ${text}`);
+
+  if (ai.wantsHuman(text)) {
+    await sender(
+      message.instagramAccountId,
+      "Te paso con un asesor de Mondano que te va a ayudar. " +
+        "Puedes contactarnos también al +56 9 9689 1362 o por contacto@mondano.cl"
+    );
+    console.log("[instagram] escalado a humano por intencion explicita");
+    return;
+  }
+
+  const orderId = orders.extractOrderId(text);
+
+  let shipment = null;
+  if (orderId) {
+    shipment = await orders.findShipmentByOrderId(orderId);
+  }
+
+  let context;
+  if (shipment) {
+    context = ai.buildShipmentContext(shipment);
+  } else if (orderId) {
+    context =
+      `No se encontro informacion de envio para el pedido ${orderId}. ` +
+      `El pedido puede no tener envio generado todavia.`;
+  } else {
+    context =
+      "No se encontro ningun pedido. " +
+      "Pide al cliente el numero de pedido (formato MON-XXXX) para poder ayudarte.";
+  }
+
+  const { ok, reply, error } = await ai.generateReply({ userText: text, context });
+
+  if (!ok) {
+    console.error("[instagram] error de IA:", error);
+    await sender(
+      message.instagramAccountId,
+      "Tuve problemas para responder en este momento. " +
+        "Por favor contacta a nuestro equipo al +56 9 9689 1362 o contacto@mondano.cl"
+    );
+    return;
+  }
+
+  await sender(message.instagramAccountId, reply);
+  console.log(`[instagram] respuesta enviada: ${reply}`);
 }
 
 module.exports = app;

@@ -16,6 +16,10 @@
       "dest": "/index.js"
     },
     {
+      "src": "/webhook/instagram",
+      "dest": "/index.js"
+    },
+    {
       "src": "/tracking/(.*)",
       "dest": "/index.js"
     },

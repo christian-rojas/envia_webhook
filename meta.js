@@ -118,6 +118,102 @@ function parseInboundMessages(payload) {
 }
 
 /**
+ * Extrae los mensajes de texto de un payload del webhook de Instagram.
+ *
+ * El formato es distinto a WhatsApp:
+ *   entry[].messaging[]  ->  { sender: { id }, recipient: { id }, message: {...} }
+ *
+ * El `recipient.id` es el Instagram Account ID (IGSID) y es a donde hay que
+ * enviar la respuesta. El `sender.id` es el usuario que escribe.
+ *
+ * @param {object} payload Payload completo del webhook.
+ * @returns {Array<object>} Lista de mensajes normalizados.
+ */
+function parseInstagramMessages(payload) {
+  const out = [];
+
+  for (const entry of payload?.entry || []) {
+    // `messaging` es la clave de Instagram; `changes` es la de WhatsApp.
+    for (const messaging of entry.messaging || []) {
+      const message = messaging.message || {};
+      if (message.is_echo) continue; // eco de un mensaje que envio la app
+
+      // Los mensajes de texto vienen en message.text. Los de imagen/audio/etc.
+      // tienen otros campos y no son scope de este agente.
+      if (!message.text || !message.text.trim()) continue;
+
+      out.push({
+        messageId: message.mid || null,
+        from: messaging.sender?.id || null,
+        profileName: null,
+        text: String(message.text).trim(),
+        timestamp: messaging.timestamp ? Number(messaging.timestamp) : null,
+        // Para Instagram el destinatario es el IG Account ID.
+        instagramAccountId: messaging.recipient?.id || entry.id || null,
+        rawType: "text",
+      });
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Envia un mensaje de texto por Instagram Messaging API.
+ *
+ * A diferencia de WhatsApp, Instagram no tiene ventana de atencion de 24h:
+ * se puede responder cuando se quiera. Aun asi, Meta aplica la politica de
+ * la cuenta: responder fuera de la ventana requiere estar en Advanced Access
+ * con el feature Human Agent habilitado.
+ *
+ * @param {string} recipientId Instagram Account ID (IGSID) del destinatario.
+ * @param {string} body Texto del mensaje.
+ * @param {object} [options] Opciones: { accessToken, graphVersion }.
+ * @returns {Promise<{ok: boolean, status: number, data?: object, error?: string}>}
+ */
+async function sendInstagramMessage(recipientId, body, options = {}) {
+  const accessToken = options.accessToken || process.env.META_ACCESS_TOKEN;
+  const graphVersion = options.graphVersion || GRAPH_VERSION;
+
+  if (!isConfigured(recipientId) || !isConfigured(accessToken)) {
+    return {
+      ok: false,
+      status: 500,
+      error: "Instagram Account ID o META_ACCESS_TOKEN no configurados",
+    };
+  }
+
+  const url = `https://graph.facebook.com/${graphVersion}/me/messages`;
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        recipient: { id: String(recipientId) },
+        message: { text: String(body).slice(0, 1000) },
+        messaging_type: "RESPONSE",
+      }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const detail =
+        data?.error?.message || data?.error?.error_user_msg || `HTTP ${response.status}`;
+      return { ok: false, status: response.status, data, error: detail };
+    }
+
+    return { ok: true, status: response.status, data };
+  } catch (error) {
+    return { ok: false, status: 0, error: error.message };
+  }
+}
+
+/**
  * Envia un mensaje de texto por WhatsApp Cloud API.
  *
  * Solo funciona dentro de la ventana de atencion de 24h abierta por el
@@ -181,5 +277,7 @@ module.exports = {
   verifyMetaSignature,
   handleVerification,
   parseInboundMessages,
+  parseInstagramMessages,
   sendTextMessage,
+  sendInstagramMessage,
 };
