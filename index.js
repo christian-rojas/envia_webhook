@@ -655,7 +655,22 @@ app.post("/webhook/instagram", async (req, res) => {
 
   const messages = meta.parseInstagramMessages(req.body);
   console.log(`[instagram] ${messages.length} mensaje(s) entrante(s)`);
-  if (messages.length) lastInboundAt = new Date().toISOString();
+  if (messages.length) {
+    lastInboundAt = new Date().toISOString();
+  } else {
+    // Meta puede enviar eventos que no son mensajes (comments, mentions,
+    // reactions, seen...). Se registra la forma del payload para poder
+    // depurarlos sin depender de los logs crudos de Vercel.
+    const entry = req.body?.entry?.[0] || {};
+    console.log(
+      "[instagram] evento sin mensajes:",
+      JSON.stringify({
+        object: req.body?.object,
+        entry_id: entry.id,
+        campos: Object.keys(entry),
+      })
+    );
+  }
 
   // Meta exige responder en menos de 5 segundos, asi que se responde de
   // inmediato. En Vercel, las promesas que quedan pendientes despues de
