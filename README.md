@@ -65,6 +65,39 @@ Meta responde al guardar la suscripción con un `GET` de verificación. Si en lo
 logs de Vercel no aparece un `GET /webhook/instagram` → `[instagram] webhook
 verificado` al guardar, la suscripción no quedó activa.
 
+## Cómo identifica el bot el pedido
+
+El caso real es que el cliente escribe `hola` o `¿qué pasó con mi pedido?` **sin**
+dar el número de pedido. El bot lo resuelve en cascada:
+
+| # | Vía | Nota |
+|---|---|---|
+| 1 | Número de pedido en el texto | `MON-3007`, `mon-3007`, `pedido 3007`, `3007` |
+| 2 | **Teléfono en el texto** | Clave en Instagram, donde el id del usuario no es un teléfono |
+| 3 | Memoria de la conversación | Lo que el cliente dijo antes (30 min) |
+| 4 | Se le pide el dato | Número de pedido **o** teléfono de compra |
+
+En **WhatsApp** el paso 2 es automático: el `from` del webhook *es* el teléfono,
+así que el bot nunca tiene que pedir un dato para saber de quién se trata.
+
+El teléfono no está en Supabase: vive en Envia (`destination.phone`). Por eso la
+búsqueda por teléfono consulta los envíos recientes y compara el teléfono del
+destinatario de cada uno.
+
+Si el teléfono coincide con **varios** envíos, el bot responde por el más
+reciente y pide confirmación.
+
+### Memoria de conversación
+
+`conversation.js` guarda, por cliente, el último pedido y teléfono que nos dio,
+para que los mensajes siguientes (`¿y cuándo llega?`) no repitan el dato.
+
+Implementación actual: memoria del proceso (`Map`) con TTL de 30 min. En un cold
+start de Vercel se pierde, por eso el bot **siempre** vuelve a pedir el dato si
+no lo tiene. Para hacerlo durable, reemplazar el `Map` por una tabla de
+Supabase — la interfaz `get / remember / forget` no cambia (ver el SQL sugerido
+en el propio archivo).
+
 ## Errores frecuentes
 
 | Error | Causa | Solución |
@@ -88,5 +121,9 @@ Responder a `recipient.id` es mandarse un mensaje a uno mismo.
 ## Scripts
 
 - `scripts/setup_meta_integration.js` — scopes + suscripción + estado final.
+- `scripts/test_resolucion.js` — 41 tests de extracción de pedido/teléfono,
+  memoria de conversación y contextos. `node scripts/test_resolucion.js`
+- `scripts/test_conversacion.js` — prueba el flujo completo con el handler real
+  y un remitente falso (no envía nada a Instagram).
 - `validate_meta.js` — validación de credenciales de Meta.
 - `setup_meta_creds.sh` — alta de credenciales en Vercel.
