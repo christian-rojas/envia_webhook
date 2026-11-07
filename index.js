@@ -39,20 +39,23 @@ function looksLikeManufacturing(notes) {
 }
 
 /**
- * Busca las notas de fabricacion del pedido en Shopify.
+ * Devuelve las notas internas del pedido y si describen etapas de
+ * manufactura.
  *
- * Solo tiene sentido mientras el paquete NO fue retirado por la transportista:
- * una vez que salio, la fabricacion ya termino.
+ * Se devuelve tambien cuando las notas NO hablan de manufactura: en ese
+ * caso el bot simplemente dice que el pedido esta en confeccion.
  *
  * @param {object} resolved Resultado de resolveInstagramOrder.
- * @returns {Promise<string>} Notas de fabricacion ("" si no hay).
+ * @returns {Promise<{notes: string, processDetails: boolean}>}
  */
 async function getManufacturingNotes(resolved) {
   const orderId = resolved.orderId;
-  if (!orderId) return "";
+  const vacio = { notes: "", processDetails: false };
+  if (!orderId) return vacio;
 
-  // Solo si el envio no fue retirado por la transportista.
-  if (!orders.isNotPickedUp(resolved.shipment)) return "";
+  // Solo si el envio no fue retirado por la transportista: una vez que el
+  // paquete salio, la fabricacion ya termino.
+  if (!orders.isNotPickedUp(resolved.shipment)) return vacio;
 
   try {
     // Si ya se consulto Shopify, se reutiliza (evita una segunda llamada).
@@ -62,24 +65,23 @@ async function getManufacturingNotes(resolved) {
       console.log(
         `[shopify] pedido ${orderId} no encontrado (¿fuera de la ventana de 60 dias?)`
       );
-      return "";
+      return vacio;
     }
     if (!ctx.notes) {
-      console.log(`[shopify] pedido ${orderId} sin notas`);
-      return "";
+      console.log(`[shopify] pedido ${orderId} sin notas -> se dice "en confeccion"`);
+      return vacio;
     }
-    if (!looksLikeManufacturing(ctx.notes)) {
-      console.log(
-        `[shopify] pedido ${orderId}: la nota no habla de fabricacion, se omite`
-      );
-      return "";
-    }
-    console.log(`[shopify] pedido ${orderId}: notas de fabricacion encontradas`);
-    return ctx.notes;
+
+    const processDetails = looksLikeManufacturing(ctx.notes);
+    console.log(
+      `[shopify] pedido ${orderId}: notas ` +
+        (processDetails ? "DE FABRICACION" : "sin detalle de etapas (en confeccion)")
+    );
+    return { notes: ctx.notes, processDetails };
   } catch (error) {
     // Un fallo de Shopify no debe tumbar la respuesta del bot.
     console.error(`[shopify] error leyendo ${orderId}:`, error.message);
-    return "";
+    return vacio;
   }
 }
 
@@ -942,10 +944,15 @@ async function handleInstagramMessage(message, sender) {
     });
   }
 
-  // Proceso de fabricacion: solo mientras el paquete no fue retirado.
-  const processNotes = await getManufacturingNotes(resolved);
-  if (processNotes) {
-    context += "\n\n" + ai.buildProcessContext(processNotes);
+  // Proceso de fabricacion: se cuenta mientras el paquete no fue retirado.
+  const process = await getManufacturingNotes(resolved);
+  const mostrarProceso =
+    resolved.orderId &&
+    resolved.reason !== "pedido_no_encontrado" &&
+    orders.isNotPickedUp(resolved.shipment);
+
+  if (mostrarProceso) {
+    context += "\n\n" + ai.buildProcessContext(process.notes, process);
   }
 
   const { ok, reply, error } = await ai.generateReply({ userText: text, context });

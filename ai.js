@@ -160,10 +160,26 @@ function buildMissingDataContext({ reason, orderId, matches, channel, greeting }
  * Estas notas son informacion interna del taller. Se le dan al modelo para
  * que las traduzca a un mensaje para el cliente, nunca para copiarlas.
  *
- * @param {string} notes Notas internas.
+ * Hay dos casos:
+ *   - Las notas describen etapas (corte, planchado, ensamblaje...): se le
+ *     pide que las cuente.
+ *   - Las notas NO describen etapas: solo se dice que el pedido esta en
+ *     confeccion, sin inventar nada.
+ *
+ * @param {string} notes Notas internas (puede ir vacio).
+ * @param {object} [options] { processDetails } las notas traen etapas.
  * @returns {string}
  */
-function buildProcessContext(notes) {
+function buildProcessContext(notes, { processDetails = false } = {}) {
+  if (!processDetails) {
+    return (
+      `El pedido sigue en el taller, en CONFECCION: todavia no se ha entregado ` +
+      `a la transportista. NO hay detalle de etapas en las notas internas, asi ` +
+      `que NO inventes ninguna. Dile simplemente que el pedido esta en ` +
+      `confeccion.`
+    );
+  }
+
   return (
     `NOTAS INTERNAS DE FABRICACION DEL PEDIDO (no son del cliente):\n` +
     `${notes}\n\n` +
