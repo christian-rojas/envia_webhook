@@ -35,6 +35,9 @@ inject();
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
 const app = express();
+// Ultimo mensaje entrante (Instagram o WhatsApp). Lo expone /health para
+// poder verificar si el webhook sigue recibiendo eventos.
+let lastInboundAt = null;
 // app.use(express.json());
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -392,6 +395,36 @@ app.post("/webhook/shopify", async (req, res) => {
   }
 });
 
+/**
+ * GET /health
+ * Estado del bot sin exponer secretos. Sirve para verificar de un vistazo
+ * si el webhook esta vivo, si las credenciales estan cargadas y cuando
+ * llego el ultimo mensaje.
+ */
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    ok: true,
+    uptime_s: Math.round(process.uptime()),
+    instagram: {
+      // Configurado = hay credenciales; NO significa que la app de Meta
+      // tenga los permisos o la suscripcion de webhooks activa.
+      configurado: meta.isConfigured(process.env.META_ACCESS_TOKEN),
+      ig_account_id: process.env.META_INSTAGRAM_ACCOUNT_ID || null,
+      app_id: process.env.META_APP_ID || null,
+      graph_version: process.env.META_GRAPH_VERSION || "v23.0",
+      ultimo_mensaje: lastInboundAt,
+    },
+    ia: {
+      configurado: Boolean(process.env.XAI_API_KEY),
+      modelo: process.env.XAI_MODEL || "grok-4.7",
+    },
+    envios: {
+      supabase: Boolean(process.env.SUPABASE_URL),
+      envia: Boolean(process.env.ENVIA_API_KEY),
+    },
+  });
+});
+
 app.get("/tracking/:order_id", async (req, res) => {
   const order_id = req.params.order_id;
   console.log("order_id del tracking", order_id);
@@ -622,6 +655,7 @@ app.post("/webhook/instagram", async (req, res) => {
 
   const messages = meta.parseInstagramMessages(req.body);
   console.log(`[instagram] ${messages.length} mensaje(s) entrante(s)`);
+  if (messages.length) lastInboundAt = new Date().toISOString();
 
   // Meta exige responder en menos de 5 segundos, asi que se responde de
   // inmediato. En Vercel, las promesas que quedan pendientes despues de
