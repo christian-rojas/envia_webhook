@@ -720,14 +720,4 @@ async function handleInstagramMessage(message, sender) {
   if (sent && sent.ok === false) console.error("[instagram] error enviando:", sent.error);
 }
 
-/**
- * GET /__ig (TEMPORAL) - devuelve el ig-user-id descubierto.
- */
-app.get("/__ig", (req, res) => {
-  res.json({
-    ig_user_id: meta.getIgUserId ? meta.getIgUserId() : null,
-    env: process.env.META_INSTAGRAM_ACCOUNT_ID || null,
-  });
-});
-
 module.exports = app;
