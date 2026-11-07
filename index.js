@@ -634,8 +634,9 @@ app.post("/webhook/instagram", async (req, res) => {
     // Instagram el id de usuario no es un telefono, asi que la respuesta
     // va al Instagram Account ID.
     // El destinatario es el cliente (sender.id del webhook), no nuestra cuenta.
+    // Si se pasa un id explicito se respeta; si no, se usa el del mensaje.
     const sender = (to, body) =>
-      meta.sendInstagramMessage(message.customerId, body, {
+      meta.sendInstagramMessage(to || message.customerId, body, {
         igUserId: message.igUserId,
       });
     try {
@@ -672,7 +673,7 @@ async function handleInstagramMessage(message, sender) {
 
   if (ai.wantsHuman(text)) {
     await sender(
-      message.instagramAccountId,
+      message.customerId,
       "Te paso con un asesor de Mondano que te va a ayudar. " +
         "Puedes contactarnos también al +56 9 9689 1362 o por contacto@mondano.cl"
     );
@@ -711,15 +712,16 @@ async function handleInstagramMessage(message, sender) {
   if (!ok) {
     console.error("[instagram] error de IA:", error);
     await sender(
-      message.instagramAccountId,
+      message.customerId,
       "Tuve problemas para responder en este momento. " +
         "Por favor contacta a nuestro equipo al +56 9 9689 1362 o contacto@mondano.cl"
     );
     return;
   }
 
-  const sent = await sender(message.instagramAccountId, reply);
+  const sent = await sender(message.customerId, reply);
   if (sent && sent.ok === false) console.error("[instagram] error enviando:", sent.error);
+  else console.log(`[instagram] respuesta enviada: ${reply}`);
 }
 
 module.exports = app;
