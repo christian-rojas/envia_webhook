@@ -72,24 +72,28 @@ dar el número de pedido. El bot lo resuelve en cascada:
 
 | # | Vía | Nota |
 |---|---|---|
-| 1 | Número de pedido en el texto | `MON-3007`, `mon-3007`, `pedido 3007`, `3007` |
-| 2 | **Teléfono en el texto** | Clave en Instagram, donde el id del usuario no es un teléfono |
-| 3 | Memoria de la conversación | Lo que el cliente dijo antes (30 min) |
-| 4 | Se le pide el dato | Número de pedido **o** teléfono de compra |
+| 1 | Número de pedido en el texto | `MON3007`, `mon3007`, `pedido 3007`, `3007` |
+| 2 | Memoria de la conversación | Lo que el cliente dijo antes (30 min) |
+| 3 | Se le pide el número de pedido | Formato `MON3007`, **sin guion** |
 
-En **WhatsApp** el paso 2 es automático: el `from` del webhook *es* el teléfono,
-así que el bot nunca tiene que pedir un dato para saber de quién se trata.
+**No se pide el teléfono del cliente.** En Instagram el id del usuario no es un
+teléfono, así que el número de pedido es la única vía. Pedir el teléfono
+complicaría la conversación sin aportar nada.
+
+En **WhatsApp** el `from` del webhook *es* el teléfono del cliente, así que ahí
+el bot sabe de quién se trata sin preguntar nada. Eso es identidad del canal,
+no un dato que se le recabe.
 
 El teléfono no está en Supabase: vive en Envia (`destination.phone`). Por eso la
-búsqueda por teléfono consulta los envíos recientes y compara el teléfono del
-destinatario de cada uno.
+búsqueda por teléfono (solo para WhatsApp) consulta los envíos recientes y
+compara el teléfono del destinatario de cada uno.
 
 Si el teléfono coincide con **varios** envíos, el bot responde por el más
 reciente y pide confirmación.
 
 ### Memoria de conversación
 
-`conversation.js` guarda, por cliente, el último pedido y teléfono que nos dio,
+`conversation.js` guarda, por cliente, el último número de pedido que nos dio,
 para que los mensajes siguientes (`¿y cuándo llega?`) no repitan el dato.
 
 Implementación actual: memoria del proceso (`Map`) con TTL de 30 min. En un cold

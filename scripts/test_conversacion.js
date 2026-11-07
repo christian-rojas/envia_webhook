@@ -2,9 +2,9 @@
 /**
  * Prueba del flujo conversacional completo (el caso que planteaste):
  *
- *   1) "hola"                        -> el bot pide un dato
- *   2) "que paso con mi pedido?"     -> el bot pide un dato (no dice "no encontrado")
- *   3) "mi telefono es 986891362"    -> el bot encuentra el pedido y responde
+ *   1) "hola"                        -> el bot pide el numero de pedido
+ *   2) "que paso con mi pedido?"     -> el bot pide el numero de pedido
+ *   3) "MON3007"                     -> el bot encuentra el pedido y responde
  *   4) "y cuando me llega?"          -> recuerda el pedido de antes y responde
  *
  * Usa el handler REAL (index.js) y una IA real, pero NO envia nada a
@@ -50,7 +50,7 @@ function mostrar(n, texto) {
   const casos = [
     "hola",
     "que paso con mi pedido?",
-    "mi telefono es 986891362",
+    "MON3007",
     "y cuando me llega?",
   ];
 

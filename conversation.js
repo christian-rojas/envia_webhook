@@ -1,9 +1,11 @@
 /**
  * Memoria de conversacion del bot.
  *
- * Guarda, por cliente, el ultimo pedido (MON-XXXX) o telefono que nos dio,
+ * Guarda, por cliente, el ultimo numero de pedido (MON3007) que nos dio,
  * para que en los mensajes siguientes ("hola", "y cuando llega?") no tenga
  * que repetirlo.
+ *
+ * NO se guarda el telefono del cliente: no se le pide y no hace falta.
  *
  * IMPLEMENTACION ACTUAL: memoria en el proceso (Map).
  *   - Vercel reutiliza la instancia mientras hay trafico, asi que en la
@@ -18,9 +20,8 @@
  *   create table bot_conversations (
  *     id bigint generated always as identity primary key,
  *     channel text not null,          -- 'instagram' | 'whatsapp'
- *     customer_key text not null,     -- IGSID o telefono
+ *     customer_key text not null,     -- IGSID (instagram) o telefono (whatsapp)
  *     order_id text,
- *     phone text,
  *     updated_at timestamptz not null default now()
  *   );
  *   create unique index on bot_conversations (channel, customer_key);
@@ -29,7 +30,7 @@
 /** Tiempo que se recuerda el contexto de un cliente. */
 const TTL_MS = Number(process.env.BOT_MEMORY_TTL_MS || 30 * 60 * 1000); // 30 min
 
-/** Map<clave, {orderId, phone, seenAt}> */
+/** Map<clave, {orderId, seenAt}> */
 const store = new Map();
 
 /**
@@ -47,7 +48,7 @@ function purgeExpired() {
  * Devuelve el contexto guardado para un cliente (o null).
  *
  * @param {string} key Identificador del cliente (IGSID o telefono).
- * @returns {{orderId: string|null, phone: string|null}|null}
+ * @returns {{orderId: string|null}|null}
  */
 function get(key) {
   if (!key) return null;
@@ -57,24 +58,23 @@ function get(key) {
     store.delete(key);
     return null;
   }
-  return { orderId: entry.orderId || null, phone: entry.phone || null };
+  return { orderId: entry.orderId || null };
 }
 
 /**
  * Guarda (o actualiza) el contexto de un cliente.
  *
  * @param {string} key Identificador del cliente.
- * @param {object} patch { orderId, phone }
+ * @param {object} patch { orderId }
  * @returns {void}
  */
 function remember(key, patch = {}) {
   if (!key) return;
   purgeExpired();
 
-  const current = store.get(key) || { orderId: null, phone: null };
+  const current = store.get(key) || { orderId: null };
   store.set(key, {
     orderId: patch.orderId || current.orderId || null,
-    phone: patch.phone || current.phone || null,
     seenAt: Date.now(),
   });
 }

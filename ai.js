@@ -120,28 +120,13 @@ function buildMissingDataContext({ reason, orderId, matches, channel, greeting }
     case "pedido_desconocido":
       lines.push(
         `Se busca el pedido ${orderId} pero NO existe en la base de datos. ` +
-          `Pide al cliente que revise el numero de pedido (formato MON-3007).`
+          `Pide al cliente que revise el numero de pedido (formato MON3007).`
       );
       break;
 
-    case "telefono_multiples":
+    case "pedido_sin_envio":
       lines.push(
-        `Ese telefono tiene ${matches} pedidos/envios. ` +
-          `Pide al cliente que confirme CUAL pedido (numero MON-XXXX) quiere consultar.`
-      );
-      break;
-
-    case "telefono_sin_match":
-      lines.push(
-        `Se busca un envio asociado al telefono del cliente pero no hay ninguno. ` +
-          `Pide el numero de pedido (formato MON-3007) para poder verificarlo.`
-      );
-      break;
-
-    case "pedido_sin_match_telefono":
-      lines.push(
-        `El pedido ${orderId} fue encontrado, pero el telefono del remitente no ` +
-          `coincide con el del destinatario del envio.`
+        `El pedido ${orderId} existe pero no tiene envio generado todavia.`
       );
       break;
 
@@ -153,17 +138,8 @@ function buildMissingDataContext({ reason, orderId, matches, channel, greeting }
       break;
   }
 
-  if (channel === "instagram") {
-    // En Instagram no se conoce el telefono del cliente, asi que se ofrecen
-    // las dos vias: el numero de pedido o el telefono de compra.
-    lines.push(
-      `Pide el numero de pedido (formato MON-3007) y Ofrece como alternativa ` +
-        `el telefono con el que hizo la compra. Elige una, no insistas con ambas.`
-    );
-  } else {
-    // En WhatsApp ya se conoce el telefono del cliente: solo falta el pedido.
-    lines.push(`Pide el numero de pedido (formato MON-3007).`);
-  }
+  // El unico dato que se pide es el numero de pedido.
+  lines.push(`Pide el numero de pedido (formato MON3007).`);
 
   return lines.join("\n");
 }
@@ -176,12 +152,12 @@ REGLAS ESTRICTAS:
 1. Responde SOLO con informacion presente en el CONTEXTO DEL PEDIDO que se te entrega.
 2. Si el contexto no contiene la respuesta, NO inventes ni estimes. Di que no tienes esa informacion y que un asesor te ayudara.
 3. Se breve y friendly, como un chat. Usa "tú". Maximo 3 frases.
-4. Si el pedido NO fue encontrado, pide el numero de pedido (formato MON-XXXX) y ofrece pasar con un asesor.
-5. Si el cliente saluda sin pedir informacion, responde con un saludo corto y preguntale como puedes ayudarte.
+4. Si el pedido NO fue encontrado, pide el numero de pedido (formato MON3007) y ofrece pasar con un asesor.
+5. Si el cliente saluda sin pedir informacion, responde con un saludo corto y preguntale como puedes ayudarle.
 6. Nunca prometas fechas que no esten en el contexto.
 7. Nunca inventes politicas de la tienda (plazos de envio, costos, formas de pago) que no esten en el contexto.
-8. Cuando el contexto indique que falta un dato para identificar el pedido, pide el numero de pedido (formato MON-XXXX). Si el contexto indica que puedes ofrecer el telefono de compra como alternativa, ofrecelo en la misma frase, sin pedir los dos datos por separado.
-9. Si el contexto indica que el cliente tiene varios pedidos, pidele que confirme cual.
+8. Cuando el contexto indique que falta un dato para identificar el pedido, pide SOLO el numero de pedido (formato MON3007). Nunca pidas el telefono del cliente ni el email.
+9. Escribe el numero de pedido sin guion: MON3007, nunca MON-3007.
 
 FORMATO DE RESPUESTA: solo el texto que se envia por WhatsApp. Sin prefijo, sin comillas, sin markdown.`;
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Pruebas de la resolucion de pedidos sin numero de pedido (MON-XXXX).
+ * Pruebas de la resolucion de pedidos sin numero de pedido (MONXXXX).
  *
  * No pegan a la red salvo en los casos marcados como [RED].
  *
@@ -116,9 +116,10 @@ check("guarda y recupera el pedido", () => {
   assert.strictEqual(conversation.get("IGSID_TEST_1").orderId, "MON3007");
 });
 
-check("recupera el telefono", () => {
-  conversation.remember("IGSID_TEST_2", { phone: "5696891362" });
-  assert.strictEqual(conversation.get("IGSID_TEST_2").phone, "5696891362");
+check("no guarda telefono del cliente", () => {
+  conversation.remember("IGSID_TEST_2", { orderId: "MON3007" });
+  const memo = conversation.get("IGSID_TEST_2");
+  assert.strictEqual(memo.phone, undefined, "la memoria no debe guardar telefono");
 });
 
 check("no mezcla clientes distintos", () => {
@@ -141,20 +142,25 @@ console.log("\n\x1b[1m5) Contexto para cuando falta el dato\x1b[0m");
 check("'sin_datos' dice que NO se busco nada", () => {
   const ctx = ai.buildMissingDataContext({ reason: "sin_datos", channel: "instagram" });
   assert.ok(ctx.includes("NO se ha identificado"), ctx);
-  assert.ok(ctx.includes("MON-3007"), ctx);
-  assert.ok(ctx.includes("telefono"), ctx);
+  assert.ok(ctx.includes("MON3007"), ctx);
+});
+
+check("pide el numero de pedido en formato MON3007 (sin guion)", () => {
+  const ctx = ai.buildMissingDataContext({ reason: "sin_datos" });
+  assert.ok(ctx.includes("MON3007"), ctx);
+  assert.ok(!ctx.includes("MON-"), `no debe pedir un formato con guion: ${ctx}`);
+});
+
+check("NO pide el telefono ni el email", () => {
+  const ctx = ai.buildMissingDataContext({ reason: "sin_datos", channel: "instagram" });
+  assert.ok(!/telefono de compra/i.test(ctx), `no debe pedir el telefono: ${ctx}`);
+  assert.ok(!/correo|email/i.test(ctx), `no debe pedir el email: ${ctx}`);
 });
 
 check("'pedido_desconocido' es claro", () => {
   const ctx = ai.buildMissingDataContext({ reason: "pedido_desconocido", orderId: "MON1234" });
   assert.ok(ctx.includes("MON1234"), ctx);
   assert.ok(ctx.includes("NO existe"), ctx);
-});
-
-check("'telefono_multiples' pide confirmar", () => {
-  const ctx = ai.buildMissingDataContext({ reason: "telefono_multiples", matches: 3 });
-  assert.ok(ctx.includes("3"), ctx);
-  assert.ok(ctx.includes("confirme"), ctx);
 });
 
 console.log("\n\x1b[1m6) Contexto del pedido (IA)\x1b[0m");
