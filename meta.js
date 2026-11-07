@@ -15,6 +15,45 @@ const crypto = require("crypto");
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION || "v23.0";
 
 /**
+ * Cache en memoria del ig-user-id de la cuenta de negocio.
+ *
+ * El ig-user-id llega en entry[].id de cada webhook entrante. Se cachea
+ * porque el endpoint de envio lo necesita y el valor no cambia. Se persiste
+ * tambien en un archivo para sobrevivir a reinicios de la funcion (Vercel
+ * recicla las instancias).
+ */
+let cachedIgUserId = process.env.META_INSTAGRAM_ACCOUNT_ID || null;
+const IG_USER_ID_FILE = "/tmp/ig_user_id.txt";
+
+try {
+  if (!cachedIgUserId) {
+    const fs = require("fs");
+    if (fs.existsSync(IG_USER_ID_FILE)) {
+      cachedIgUserId = fs.readFileSync(IG_USER_ID_FILE, "utf8").trim() || null;
+    }
+  }
+} catch {
+  // sin persistencia en disco: se usa solo la cache en memoria
+}
+
+/**
+ * Guarda el ig-user-id descubierto.
+ *
+ * @param {string} igUserId
+ */
+function rememberIgUserId(igUserId) {
+  if (!igUserId || cachedIgUserId === igUserId) return;
+  cachedIgUserId = igUserId;
+  try {
+    const fs = require("fs");
+    fs.writeFileSync(IG_USER_ID_FILE, igUserId, "utf8");
+  } catch {
+    // si no se puede escribir, la cache en memoria basta
+  }
+  console.log(`[instagram] ig-user-id descubierto: ${igUserId}`);
+}
+
+/**
  * Valor centinela usado al desplegar la variable de entorno antes de tener el
  * valor real. Evita que el bot intente enviar mensajes con credenciales
  * falsas y genere errores confusos en Meta.
@@ -137,6 +176,7 @@ function parseInstagramMessages(payload) {
     // que hay que hacer POST /{ig-user-id}/messages para responder. No se
     // puede adivinar ni descubrir por API: hay que tomarlo del webhook.
     const igUserId = entry.id || null;
+    rememberIgUserId(igUserId);
 
     // `messaging` es la clave de Instagram; `changes` es la de WhatsApp.
     for (const messaging of entry.messaging || []) {
@@ -191,7 +231,7 @@ async function sendInstagramMessage(recipientId, body, options = {}) {
   const graphVersion = options.graphVersion || GRAPH_VERSION;
   // El ig-user-id puede venir del webhook (entry[].id) o de la env.
   const accountId =
-    options.accountId || process.env.META_INSTAGRAM_ACCOUNT_ID || options.igUserId;
+    options.accountId || options.igUserId || cachedIgUserId || process.env.META_INSTAGRAM_ACCOUNT_ID;
 
   if (!isConfigured(recipientId) || !isConfigured(accessToken)) {
     return {
@@ -234,7 +274,13 @@ async function sendInstagramMessage(recipientId, body, options = {}) {
     if (!response.ok) {
       const detail =
         data?.error?.message || data?.error?.error_user_msg || `HTTP ${response.status}`;
-      return { ok: false, status: response.status, data, error: detail };
+      const subcode = data?.error?.error_subcode;
+      const hint =
+        subcode === 33
+          ? " | Suele indicar que al token le falta pages_manage_metadata " +
+            "(o pages_messaging) o que el ig-user-id no es el de la cuenta."
+          : "";
+      return { ok: false, status: response.status, data, error: detail + hint };
     }
 
     return { ok: true, status: response.status, data };
@@ -292,7 +338,13 @@ async function sendTextMessage(to, body, options = {}) {
     if (!response.ok) {
       const detail =
         data?.error?.message || data?.error?.error_user_msg || `HTTP ${response.status}`;
-      return { ok: false, status: response.status, data, error: detail };
+      const subcode = data?.error?.error_subcode;
+      const hint =
+        subcode === 33
+          ? " | Suele indicar que al token le falta pages_manage_metadata " +
+            "(o pages_messaging) o que el ig-user-id no es el de la cuenta."
+          : "";
+      return { ok: false, status: response.status, data, error: detail + hint };
     }
 
     return { ok: true, status: response.status, data };
@@ -304,6 +356,8 @@ async function sendTextMessage(to, body, options = {}) {
 module.exports = {
   GRAPH_VERSION,
   isConfigured,
+  rememberIgUserId,
+  getIgUserId: () => cachedIgUserId,
   verifyMetaSignature,
   handleVerification,
   parseInboundMessages,
