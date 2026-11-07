@@ -194,10 +194,13 @@ function parseInstagramMessages(payload) {
         text: String(message.text).trim(),
         timestamp: messaging.timestamp ? Number(messaging.timestamp) : null,
         // Para Instagram el destinatario es el IG Account ID.
-        // Para Instagram el destinatario es el Instagram-scoped ID del usuario.
-        instagramAccountId: messaging.recipient?.id || igUserId || null,
-        // ig-user-id de la cuenta de negocio, para el endpoint de envio.
-        igUserId,
+        // Segun el payload oficial de Meta:
+        //   sender.id    -> Instagram-scoped ID del CLIENTE que escribio (destinatario de la respuesta)
+        //   recipient.id -> ID de NUESTRA cuenta de negocio
+        // Responder a recipient.id seria mandarse un mensaje a uno mismo.
+        customerId: messaging.sender?.id || null,
+        // ig-user-id de la cuenta de negocio: es el id en el path del endpoint de envio.
+        igUserId: igUserId || messaging.recipient?.id || null,
         rawType: "text",
       });
     }
@@ -262,10 +265,11 @@ async function sendInstagramMessage(recipientId, body, options = {}) {
         "Content-Type": "application/json",
         Authorization: `Bearer ${accessToken}`,
       },
+      // El body sigue el formato oficial de Instagram Messaging:
+      //   { recipient: { id: "<IGSID del cliente>" }, message: { text: "..." } }
       body: JSON.stringify({
         recipient: { id: String(recipientId) },
         message: { text: String(body).slice(0, 1000) },
-        messaging_type: "RESPONSE",
       }),
     });
 
@@ -275,11 +279,16 @@ async function sendInstagramMessage(recipientId, body, options = {}) {
       const detail =
         data?.error?.message || data?.error?.error_user_msg || `HTTP ${response.status}`;
       const subcode = data?.error?.error_subcode;
-      const hint =
-        subcode === 33
-          ? " | Suele indicar que al token le falta pages_manage_metadata " +
-            "(o pages_messaging) o que el ig-user-id no es el de la cuenta."
-          : "";
+      let hint = "";
+      if (subcode === 33) {
+        hint =
+          " | Suele indicar que al token le falta pages_manage_metadata " +
+          "(o pages_messaging) o que el ig-user-id no es el de la cuenta.";
+      } else if (subcode === 2534014) {
+        hint =
+          " | No se encontro al destinatario. En Instagram solo se puede " +
+          "responder a alguien que ya te escribio (debe existir una conversacion).";
+      }
       return { ok: false, status: response.status, data, error: detail + hint };
     }
 
@@ -339,11 +348,16 @@ async function sendTextMessage(to, body, options = {}) {
       const detail =
         data?.error?.message || data?.error?.error_user_msg || `HTTP ${response.status}`;
       const subcode = data?.error?.error_subcode;
-      const hint =
-        subcode === 33
-          ? " | Suele indicar que al token le falta pages_manage_metadata " +
-            "(o pages_messaging) o que el ig-user-id no es el de la cuenta."
-          : "";
+      let hint = "";
+      if (subcode === 33) {
+        hint =
+          " | Suele indicar que al token le falta pages_manage_metadata " +
+          "(o pages_messaging) o que el ig-user-id no es el de la cuenta.";
+      } else if (subcode === 2534014) {
+        hint =
+          " | No se encontro al destinatario. En Instagram solo se puede " +
+          "responder a alguien que ya te escribio (debe existir una conversacion).";
+      }
       return { ok: false, status: response.status, data, error: detail + hint };
     }
 

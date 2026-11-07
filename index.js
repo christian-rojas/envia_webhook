@@ -633,8 +633,9 @@ app.post("/webhook/instagram", async (req, res) => {
     // El "from" sirve para buscar pedidos por telefono (WhatsApp); en
     // Instagram el id de usuario no es un telefono, asi que la respuesta
     // va al Instagram Account ID.
+    // El destinatario es el cliente (sender.id del webhook), no nuestra cuenta.
     const sender = (to, body) =>
-      meta.sendInstagramMessage(message.instagramAccountId, body, {
+      meta.sendInstagramMessage(message.customerId, body, {
         igUserId: message.igUserId,
       });
     try {
@@ -705,6 +706,7 @@ async function handleInstagramMessage(message, sender) {
   }
 
   const { ok, reply, error } = await ai.generateReply({ userText: text, context });
+  console.log(`[instagram] IA ok=${ok}${error ? " error=" + error : ""}`);
 
   if (!ok) {
     console.error("[instagram] error de IA:", error);
