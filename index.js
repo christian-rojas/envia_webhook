@@ -12,7 +12,74 @@ const { saveShipmentData, saveShipmentDataWithEnvia } = require("./supa.js");
 const meta = require("./meta.js");
 const ai = require("./ai.js");
 const orders = require("./orders.js");
+const shopify = require("./shopify.js");
 const conversation = require("./conversation.js");
+
+// Palabras que delatan que una nota habla del proceso de fabricacion.
+// Si la nota del pedido no menciona ninguna, no se le manda nada al cliente:
+// las notas operativas (conserjeria, cambios de pedido) son internas.
+const MANUFACTURING_KEYWORDS = (
+  process.env.MANUFACTURING_KEYWORDS ||
+  "corte,elabora,planch,ensamblaj,costur,confecci,producc,tejid,serigraf,estampad,termin,listo,armado,montaje,acabado"
+)
+  .split(",")
+  .map((k) => k.trim().toLowerCase())
+  .filter(Boolean);
+
+/**
+ * Indica si unas notas internas hablan del proceso de fabricacion.
+ *
+ * @param {string} notes Notas del pedido.
+ * @returns {boolean}
+ */
+function looksLikeManufacturing(notes) {
+  if (!notes) return false;
+  const lower = notes.toLowerCase();
+  return MANUFACTURING_KEYWORDS.some((k) => lower.includes(k));
+}
+
+/**
+ * Busca el proceso de fabricacion del pedido en Shopify.
+ *
+ * Solo tiene sentido mientras el paquete NO fue retirado por la transportista:
+ * una vez que salio, la fabricacion ya termino.
+ *
+ * @param {object} resolved Resultado de resolveInstagramOrder.
+ * @returns {Promise<string>} Notas de fabricacion ("" si no hay).
+ */
+async function getManufacturingNotes(resolved) {
+  const orderId = resolved.orderId;
+  if (!orderId) return "";
+
+  // Solo si el envio no fue retirado por la transportista.
+  if (!orders.isNotPickedUp(resolved.shipment)) return "";
+
+  try {
+    const ctx = await shopify.getOrderContext(orderId);
+    if (!ctx.found) {
+      console.log(
+        `[shopify] pedido ${orderId} no encontrado (¿fuera de la ventana de 60 dias?)`
+      );
+      return "";
+    }
+    if (!ctx.notes) {
+      console.log(`[shopify] pedido ${orderId} sin notas`);
+      return "";
+    }
+    if (!looksLikeManufacturing(ctx.notes)) {
+      console.log(
+        `[shopify] pedido ${orderId}: la nota no habla de fabricacion, se omite`
+      );
+      return "";
+    }
+    console.log(`[shopify] pedido ${orderId}: notas de fabricacion encontradas`);
+    return ctx.notes;
+  } catch (error) {
+    // Un fallo de Shopify no debe tumbar la respuesta del bot.
+    console.error(`[shopify] error leyendo ${orderId}:`, error.message);
+    return "";
+  }
+}
 dotenv.config();
 
 // Log global de errores no capturados: sin esto, una excepcion en una
@@ -829,6 +896,12 @@ async function handleInstagramMessage(message, sender) {
       orderId: resolved.orderId,
       greeting: ai.isGreetingOnly(text),
     });
+  }
+
+  // Proceso de fabricacion: solo mientras el paquete no fue retirado.
+  const processNotes = await getManufacturingNotes(resolved);
+  if (processNotes) {
+    context += "\n\n" + ai.buildProcessContext(processNotes);
   }
 
   const { ok, reply, error } = await ai.generateReply({ userText: text, context });

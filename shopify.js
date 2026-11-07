@@ -1,0 +1,381 @@
+/**
+ * Cliente de Shopify Admin API para leer pedidos y sus notas.
+ *
+ * AUTENTICACION (client credentials grant)
+ * -----------------------------------------
+ * La app se creo en el Dev Dashboard de Shopify bajo la organizacion del
+ * comerciante, asi que no hay un token `shpat_` fijo en el admin: el token se
+ * pide programaticamente con el Client ID + Client Secret.
+ *
+ *   POST https://{shop}.myshopify.com/admin/oauth/access_token
+ *   grant_type=client_credentials
+ *
+ * El token expira a las 24h, asi que se cachea en memoria y se renueva un
+ * minuto antes de expirar. Si una llamada devuelve 401 (token revocado o
+ * scopes cambiados), se fuerza la renovacion y se reintenta una vez.
+ *
+ * SCOPES
+ * ------
+ * `read_orders` cubre solo los ultimos 60 dias de pedidos.
+ * `read_all_orders` (que hay que declarar junto a `read_orders`) da acceso a
+ * todo el historial.
+ */
+
+// En local carga el .env; en Vercel no hace nada (no hay archivo .env).
+// dotenv no pisa las variables ya definidas, asi que en produccion manda Vercel.
+// Va antes de leer las variables de entorno.
+try {
+  require("dotenv").config();
+} catch {
+  /* dotenv es opcional */
+}
+
+const SHOPIFY_SHOP = process.env.SHOPIFY_SHOP || "mondano-chile";
+const API_VERSION = process.env.SHOPIFY_API_VERSION || "2026-10";
+const REQUEST_TIMEOUT_MS = Number(process.env.SHOPIFY_TIMEOUT_MS || 20000);
+
+// Cache del token: { token, expiresAt, scope }
+let tokenCache = null;
+
+// Cache de pedidos: Map<nombre, { order, savedAt }>
+const orderCache = new Map();
+const ORDER_CACHE_MS = Number(process.env.SHOPIFY_ORDER_CACHE_MS || 60000);
+
+/**
+ * Pide (o renueva) el access token de la Admin API.
+ *
+ * @param {object} [options] { force } fuerza la renovacion.
+ * @returns {Promise<string>} Access token.
+ */
+async function getAccessToken({ force = false } = {}) {
+  if (
+    !force &&
+    tokenCache &&
+    tokenCache.token &&
+    Date.now() < tokenCache.expiresAt - 60_000
+  ) {
+    return tokenCache.token;
+  }
+
+  const clientId = process.env.SHOPIFY_CLIENT_ID;
+  const clientSecret = process.env.SHOPIFY_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    throw new Error(
+      "SHOPIFY_CLIENT_ID y SHOPIFY_CLIENT_SECRET no estan configurados"
+    );
+  }
+
+  const response = await fetch(
+    `https://${SHOPIFY_SHOP}.myshopify.com/admin/oauth/access_token`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: clientId,
+        client_secret: clientSecret,
+      }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    }
+  );
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      `Shopify token error ${response.status}: ${detail.slice(0, 200)}`
+    );
+  }
+
+  const data = await response.json();
+  tokenCache = {
+    token: data.access_token,
+    expiresAt: Date.now() + (Number(data.expires_in) || 86400) * 1000,
+    scope: data.scope || null,
+  };
+  console.log(`[shopify] token renovado (scopes: ${tokenCache.scope})`);
+  return tokenCache.token;
+}
+
+/**
+ * Hace una llamada a la Admin API REST, renovando el token si hace falta.
+ *
+ * @param {string} path Ruta relativa, p.ej. "/orders.json".
+ * @param {object} [options] { method, params, body }
+ * @returns {Promise<object>} JSON de la respuesta.
+ */
+async function shopifyFetch(path, { method = "GET", params = {}, body } = {}) {
+  const url = new URL(
+    `https://${SHOPIFY_SHOP}.myshopify.com/admin/api/${API_VERSION}${path}`
+  );
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") {
+      url.searchParams.set(key, String(value));
+    }
+  }
+
+  const doRequest = async (token) =>
+    fetch(url, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": token,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+  let token = await getAccessToken();
+  let response = await doRequest(token);
+
+  // 401 = token expirado/revocado: se renueva y se reintenta una vez.
+  if (response.status === 401) {
+    token = await getAccessToken({ force: true });
+    response = await doRequest(token);
+  }
+
+  const text = await response.text();
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { raw: text };
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      `Shopify ${method} ${path} -> ${response.status}: ${text.slice(0, 200)}`
+    );
+  }
+
+  return data;
+}
+
+/**
+ * Normaliza un identificador de pedido al nombre de Shopify.
+ * Acepta "MON3007", "mon-3007", "#MON3007" y devuelve "MON3007".
+ *
+ * @param {string} value Identificador.
+ * @returns {string|null}
+ */
+function normalizeOrderName(value) {
+  if (!value) return null;
+  const digits = String(value)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .replace(/^MON/, "")
+    .replace(/^#/, "");
+  if (!/^\d{3,}$/.test(digits)) return null;
+  return `MON${digits}`;
+}
+
+/**
+ * Lee un pedido por su nombre (MON3007).
+ *
+ * @param {string} orderName Nombre del pedido.
+ * @param {object} [options] { fresh } ignora la cache.
+ * @returns {Promise<object|null>} El pedido, o null si no existe (o esta
+ *   fuera de la ventana de 60 dias sin `read_all_orders`).
+ */
+async function getOrder(orderName, { fresh = false } = {}) {
+  const name = normalizeOrderName(orderName);
+  if (!name) return null;
+
+  if (!fresh) {
+    const cached = orderCache.get(name);
+    if (cached && Date.now() - cached.savedAt < ORDER_CACHE_MS) {
+      return cached.order;
+    }
+  }
+
+  const data = await shopifyFetch("/orders.json", {
+    params: {
+      name,
+      limit: 1,
+      fields:
+        "id,name,created_at,note,note_attributes,line_items,tags," +
+        "financial_status,fulfillment_status,total_price,currency," +
+        "shipping_address,customer",
+    },
+  });
+
+  const order = (data.orders || [])[0] || null;
+  if (order) orderCache.set(name, { order, savedAt: Date.now() });
+  else orderCache.delete(name);
+
+  return order;
+}
+
+/**
+ * Junta TODAS las notas que puede tener un pedido, en un solo objeto.
+ *
+ * Busca en:
+ *   - order.note              (la nota del pedido)
+ *   - order.note_attributes    (atributos de nota)
+ *   - line_items[].properties  (propiedades de la linea)
+ *   - metafields del pedido    (GraphQL)
+ *   - comentarios del timeline (GraphQL, CommentEvent)
+ *
+ * @param {string} orderName Nombre del pedido.
+ * @returns {Promise<object>} { name, found, notes, note, properties, metafields, comments }
+ */
+async function getOrderContext(orderName) {
+  const name = normalizeOrderName(orderName);
+  const order = await getOrder(name);
+
+  if (!order) {
+    return {
+      name,
+      found: false,
+      notes: "",
+      note: null,
+      properties: [],
+      metafields: [],
+      comments: [],
+      lineItems: [],
+    };
+  }
+
+  const note = (order.note || "").trim();
+
+  const attributes = (order.note_attributes || [])
+    .map((a) => `${a.name}: ${a.value}`)
+    .filter(Boolean);
+
+  const properties = [];
+  for (const item of order.line_items || []) {
+    for (const prop of item.properties || []) {
+      properties.push(`${item.title} — ${prop.name}: ${prop.value}`);
+    }
+  }
+
+  const extra = await getOrderExtras(name).catch(() => ({ metafields: [], comments: [] }));
+
+  const parts = [];
+  if (note) parts.push(note);
+  if (attributes.length) parts.push(attributes.join("\n"));
+  if (properties.length) parts.push(properties.join("\n"));
+  if (extra.metafields.length) {
+    parts.push(extra.metafields.map((m) => `${m.key}: ${m.value}`).join("\n"));
+  }
+  if (extra.comments.length) parts.push(extra.comments.join("\n"));
+
+  return {
+    name,
+    found: true,
+    notes: parts.join("\n").trim(),
+    note,
+    properties,
+    metafields: extra.metafields,
+    comments: extra.comments,
+    createdAt: order.created_at,
+    lineItems: (order.line_items || []).map((i) => ({
+      title: i.title,
+      quantity: i.quantity,
+      variant: i.variant_title || null,
+    })),
+  };
+}
+
+/**
+ * Lee metafields y comentarios del timeline via GraphQL.
+ *
+ * @param {string} name Nombre del pedido (MON3007).
+ * @returns {Promise<{metafields: object[], comments: string[]}>}
+ */
+async function getOrderExtras(name) {
+  const query = `query ($name: String!) {
+    orders(first: 1, query: "name:$name") {
+      edges {
+        node {
+          metafields(first: 30) { edges { node { namespace key type value } } }
+          events(first: 50) {
+            edges {
+              node {
+                __typename
+                ... on CommentEvent { message }
+                ... on BasicEvent { message }
+              }
+            }
+          }
+        }
+      }
+    }
+  }`;
+
+  const url = `https://${SHOPIFY_SHOP}.myshopify.com/admin/api/${API_VERSION}/graphql.json`;
+  const doRequest = async (token) =>
+    fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": token,
+      },
+      body: JSON.stringify({ query, variables: { name } }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+  let token = await getAccessToken();
+  let response = await doRequest(token);
+  if (response.status === 401) {
+    token = await getAccessToken({ force: true });
+    response = await doRequest(token);
+  }
+
+  const data = await response.json().catch(() => ({}));
+  if (data.errors) {
+    throw new Error(`Shopify GraphQL: ${JSON.stringify(data.errors).slice(0, 200)}`);
+  }
+
+  const node = data?.data?.orders?.edges?.[0]?.node;
+  if (!node) return { metafields: [], comments: [] };
+
+  const metafields = (node.metafields?.edges || [])
+    .map((e) => e.node)
+    .filter((m) => m && m.value);
+
+  const comments = (node.events?.edges || [])
+    .map((e) => e.node)
+    .filter((e) => e && e.__typename === "CommentEvent" && e.message)
+    .map((e) => e.message);
+
+  return { metafields, comments };
+}
+
+/**
+ * Scopes que tiene el token actual (para diagnostico).
+ *
+ * @returns {Promise<object[]>} Lista de { handle, description }.
+ */
+async function getGrantedScopes() {
+  const query = `query {
+    currentAppInstallation {
+      accessScopes { handle description }
+    }
+  }`;
+
+  const url = `https://${SHOPIFY_SHOP}.myshopify.com/admin/api/${API_VERSION}/graphql.json`;
+  const token = await getAccessToken();
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shopify-Access-Token": token,
+    },
+    body: JSON.stringify({ query }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  const data = await response.json().catch(() => ({}));
+  return data?.data?.currentAppInstallation?.accessScopes || [];
+}
+
+module.exports = {
+  SHOPIFY_SHOP,
+  API_VERSION,
+  getAccessToken,
+  shopifyFetch,
+  normalizeOrderName,
+  getOrder,
+  getOrderContext,
+  getGrantedScopes,
+};

@@ -144,6 +144,28 @@ function buildMissingDataContext({ reason, orderId, matches, channel, greeting }
   return lines.join("\n");
 }
 
+/**
+ * Contexto con las notas de fabricacion del pedido (notas internas de
+ * Shopify).
+ *
+ * Estas notas son informacion interna del taller. Se le dan al modelo para
+ * que las traduzca a un mensaje para el cliente, nunca para copiarlas.
+ *
+ * @param {string} notes Notas internas.
+ * @returns {string}
+ */
+function buildProcessContext(notes) {
+  return (
+    `NOTAS INTERNAS DE FABRICACION DEL PEDIDO (no son del cliente):\n` +
+    `${notes}\n\n` +
+    `El cliente pregunto por su pedido. Indica de forma breve y amigable en ` +
+    `que etapa va la fabricacion (corte, elaboracion, planchado, ` +
+    `ensamblaje, etc.), tal como aparece en las notas. NO menciones ` +
+    `referencias internas (numeros de ticket, otros pedidos, notas de ` +
+    `logistica o de conserjeria) ni datos que no esten en las notas.`
+  );
+}
+
 const SYSTEM_PROMPT = `Eres el asistente de WhatsApp de Mondano, una marca chilena de moda urbana.
 
 Tu unica funcion es responder preguntas sobre el estado y la fecha de entrega de un pedido.
@@ -158,6 +180,7 @@ REGLAS ESTRICTAS:
 7. Nunca inventes politicas de la tienda (plazos de envio, costos, formas de pago) que no esten en el contexto.
 8. Cuando el contexto indique que falta un dato para identificar el pedido, pide SOLO el numero de pedido (formato MON3007). Nunca pidas el telefono del cliente ni el email.
 9. Escribe el numero de pedido sin guion: MON3007, nunca MON-3007.
+10. Si el CONTEXTO incluye NOTAS INTERNAS DE FABRICACION, mencionalas en el mismo mensaje, junto al estado del envio, como una Actualizacion de la fabricacion. Maximo 2 frases extra.
 
 FORMATO DE RESPUESTA: solo el texto que se envia por WhatsApp. Sin prefijo, sin comillas, sin markdown.`;
 
@@ -273,6 +296,7 @@ module.exports = {
   isTrackingIntent,
   isGreetingOnly,
   buildShipmentContext,
+  buildProcessContext,
   buildMissingDataContext,
   generateReply,
 };

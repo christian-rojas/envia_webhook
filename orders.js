@@ -375,6 +375,59 @@ async function findShipmentByOrderId(orderId) {
   return shipment;
 }
 
+/**
+ * Indica si un envio AUN NO fue retirado por la empresa de transporte.
+ *
+ * En Envia, `status` vale "Created" cuando se genero la etiqueta pero el
+ * paquete aun no fue recogido. Ahi `shippedAt`, `pickupDate` y `deliveredAt`
+ * vienen en null. Cuando el paquete ya fue retirado, el estado pasa a
+ * "Picked up" / "In transit" / "Out for delivery" / "Delivered".
+ *
+ * Es la condicion para poder contarle al cliente como va su proceso de
+ * fabricacion: una vez que el paquete esta en la transportista, la
+ * manufactura ya termino.
+ *
+ * @param {object|null} shipment Envio normalizado.
+ * @returns {boolean}
+ */
+function isNotPickedUp(shipment) {
+  // Sin envio en Envia: el pedido todavia no tiene etiqueta, asi que
+  // la fabricacion sigue en curso.
+  if (!shipment) return true;
+
+  const status = String(shipment.status || shipment.currentStatus || "").toLowerCase();
+
+  // Estados que implican que la transportista ya tiene el paquete.
+  const collected = [
+    "picked up",
+    "picked_up",
+    "shipped",
+    "in transit",
+    "in_transit",
+    "out for delivery",
+    "out_for_delivery",
+    "delivered",
+    "delivered at origin",
+    "redirection",
+    "redirected",
+    "in information",
+    "returned",
+    "lost",
+    "damaged",
+  ];
+  if (collected.some((s) => status.includes(s))) return false;
+
+  // Indicadores de que ya salio del deposito.
+  if (shipment.shippedAt || shipment.pickupDate || shipment.deliveredAt) return false;
+
+  // "Created" (etiqueta generada, sin retirar) es el caso tipico.
+  if (status.includes("created") || status === "") return true;
+
+  // Cualquier estado desconocido: se considera retirado para no mostrar
+  // un proceso de fabricacion que podria estar obsoleto.
+  return false;
+}
+
 module.exports = {
   supabase,
   normalizePhone,
@@ -388,4 +441,5 @@ module.exports = {
   findShipment,
   findShipmentByOrderId,
   findShipmentByPhone,
+  isNotPickedUp,
 };
