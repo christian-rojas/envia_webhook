@@ -258,6 +258,35 @@ async function sendInstagramMessage(recipientId, body, options = {}) {
   // Messaging). /me/messages corresponde al flujo de Facebook Login.
   const url = `https://graph.facebook.com/${graphVersion}/${accountId}/messages`;
 
+  // Meta aplica limites de envio por app. Cuando se superan responde
+  //   (#4) Application request limit reached  con is_transient=true
+  // que es un error temporal: reintentar con backoff suele funcionar.
+  const maxAttempts = Number(process.env.META_SEND_MAX_ATTEMPTS || 3);
+  const backoffMs = Number(process.env.META_SEND_BACKOFF_MS || 5000);
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const result = await postInstagramMessage(url, recipientId, body, accessToken);
+    if (result.ok) return result;
+
+    const transient =
+      result.data?.error?.is_transient === true || result.data?.error?.code === 4;
+    if (!transient || attempt === maxAttempts) return result;
+
+    const wait = backoffMs * attempt;
+    console.warn(
+      `[instagram] envio limitado por Meta (intento ${attempt}/${maxAttempts}), ` +
+        `reintentando en ${wait}ms`
+    );
+    await new Promise((resolve) => setTimeout(resolve, wait));
+  }
+
+  return { ok: false, status: 0, error: "sin intentos de envio disponibles" };
+}
+
+/**
+ * Hace un POST a /{ig-user-id}/messages y normaliza la respuesta.
+ */
+async function postInstagramMessage(url, recipientId, body, accessToken) {
   try {
     const response = await fetch(url, {
       method: "POST",
@@ -288,6 +317,10 @@ async function sendInstagramMessage(recipientId, body, options = {}) {
         hint =
           " | No se encontro al destinatario. En Instagram solo se puede " +
           "responder a alguien que ya te escribio (debe existir una conversacion).";
+      } else if (data?.error?.code === 4) {
+        hint =
+          " | Limite de envio de la app alcanzado (error transitorio). " +
+          "Reintenta en unos minutos o revisa el modo de la app en Meta.";
       }
       return { ok: false, status: response.status, data, error: detail + hint };
     }
