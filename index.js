@@ -20,7 +20,7 @@ const conversation = require("./conversation.js");
 // las notas operativas (conserjeria, cambios de pedido) son internas.
 const MANUFACTURING_KEYWORDS = (
   process.env.MANUFACTURING_KEYWORDS ||
-  "corte,elabora,planch,ensamblaj,costur,confecci,producc,tejid,serigraf,estampad,termin,listo,armado,montaje,acabado"
+  "taller,corte,elabora,planch,ensamblaj,costur,confecci,producc,tejid,serigraf,estampad,termin,listo,armado,montaje,acabado"
 )
   .split(",")
   .map((k) => k.trim().toLowerCase())

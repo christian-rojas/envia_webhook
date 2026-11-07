@@ -170,12 +170,16 @@ function normalizeOrderName(value) {
 }
 
 /**
- * Lee un pedido por su nombre (MON3007).
+ * Lee un pedido por su nombre (MON3007) usando GraphQL.
+ *
+ * IMPORTANTE: hay que usar GraphQL y no REST. Con `read_all_orders` la
+ * conexion `orders` de GraphQL devuelve los 3700+ pedidos del historico
+ * (desde 2021), mientras que REST `/orders.json` solo devuelve 76 y
+ * `?name=` no encuentra los antiguos (p.ej. MON4500 responde vacio).
  *
  * @param {string} orderName Nombre del pedido.
  * @param {object} [options] { fresh } ignora la cache.
- * @returns {Promise<object|null>} El pedido, o null si no existe (o esta
- *   fuera de la ventana de 60 dias sin `read_all_orders`).
+ * @returns {Promise<object|null>} El pedido, o null si no existe.
  */
 async function getOrder(orderName, { fresh = false } = {}) {
   const name = normalizeOrderName(orderName);
@@ -188,22 +192,120 @@ async function getOrder(orderName, { fresh = false } = {}) {
     }
   }
 
-  const data = await shopifyFetch("/orders.json", {
-    params: {
-      name,
-      limit: 1,
-      fields:
-        "id,name,created_at,note,note_attributes,line_items,tags," +
-        "financial_status,fulfillment_status,total_price,currency," +
-        "shipping_address,customer",
-    },
-  });
+  const query = `query ($name: String!) {
+    orders(first: 1, query: $name) {
+      edges {
+        node {
+          id
+          name
+          createdAt
+          note
+          metafields(first: 30) { edges { node { namespace key type value } } }
+          events(first: 50) {
+            edges {
+              node {
+                __typename
+                ... on CommentEvent { message createdAt }
+                ... on BasicEvent { message createdAt }
+              }
+            }
+          }
+          lineItems(first: 20) { edges { node { title quantity variantTitle } } }
+        }
+      }
+    }
+  }`;
 
-  const order = (data.orders || [])[0] || null;
-  if (order) orderCache.set(name, { order, savedAt: Date.now() });
-  else orderCache.delete(name);
+  // La busqueda de GraphQL espera el formato "name:MON3007".
+  const node = await graphql(query, { name: `name:${name}` }).then(
+    (data) => data?.orders?.edges?.[0]?.node || null
+  );
 
+  if (!node) {
+    orderCache.delete(name);
+    return null;
+  }
+
+  // Campos que solo existen en REST: note_attributes y las propiedades de
+  // las lineas. Se piden por id, que si funciona para pedidos antiguos.
+  const rest = await fetchOrderRest(node.id).catch(() => null);
+
+  const metafields = (node.metafields?.edges || [])
+    .map((e) => e.node)
+    .filter((m) => m && m.value);
+
+  const events = node.events?.edges || []
+    .map((e) => e.node)
+    .filter((e) => e && e.message);
+
+  const order = {
+    id: node.id,
+    name: node.name,
+    created_at: node.createdAt,
+    note: node.note,
+    metafields,
+    events,
+    line_items: (rest?.line_items || []).length
+      ? rest.line_items
+      : (node.lineItems?.edges || []).map((e) => ({
+          title: e.node.title,
+          quantity: e.node.quantity,
+          variant_title: e.node.variantTitle,
+          properties: [],
+        })),
+    note_attributes: rest?.note_attributes || [],
+  };
+
+  orderCache.set(name, { order, savedAt: Date.now() });
   return order;
+}
+
+/**
+ * Pide un pedido por su id via REST (para los campos que no existen en
+ * GraphQL: note_attributes, propiedades de linea).
+ *
+ * @param {string} gid Id del pedido (gid://shopify/Order/...).
+ * @returns {Promise<object|null>}
+ */
+async function fetchOrderRest(gid) {
+  const id = String(gid || "").split("/").pop();
+  if (!id) return null;
+  const data = await shopifyFetch(`/orders/${id}.json`);
+  return data.order || null;
+}
+
+/**
+ * Ejecuta una query GraphQL de la Admin API.
+ *
+ * @param {string} query Consulta.
+ * @param {object} [variables] Variables.
+ * @returns {Promise<object>} data de la respuesta.
+ */
+async function graphql(query, variables = {}) {
+  const url = `https://${SHOPIFY_SHOP}.myshopify.com/admin/api/${API_VERSION}/graphql.json`;
+  const doRequest = async (token) =>
+    fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": token,
+      },
+      body: JSON.stringify({ query, variables }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+  let token = await getAccessToken();
+  let response = await doRequest(token);
+  if (response.status === 401) {
+    token = await getAccessToken({ force: true });
+    response = await doRequest(token);
+  }
+
+  const data = await response.json().catch(() => ({}));
+  if (data.errors) {
+    throw new Error(`Shopify GraphQL: ${JSON.stringify(data.errors).slice(0, 250)}`);
+  }
+  return data.data || {};
 }
 
 /**
@@ -215,6 +317,10 @@ async function getOrder(orderName, { fresh = false } = {}) {
  *   - line_items[].properties  (propiedades de la linea)
  *   - metafields del pedido    (GraphQL)
  *   - comentarios del timeline (GraphQL, CommentEvent)
+ *
+ * Los comentarios del timeline son importantes: es ahi donde el equipo
+ * escribe las notas de operacion (NUEVO ENVIO, REEMBOLSADO, CORREGIR
+ * TALLA...) y donde podrian anotar las etapas de fabricacion.
  *
  * @param {string} orderName Nombre del pedido.
  * @returns {Promise<object>} { name, found, notes, note, properties, metafields, comments }
@@ -249,16 +355,19 @@ async function getOrderContext(orderName) {
     }
   }
 
-  const extra = await getOrderExtras(name).catch(() => ({ metafields: [], comments: [] }));
+  const metafields = order.metafields || [];
+  const comments = (order.events || [])
+    .filter((e) => e.__typename === "CommentEvent")
+    .map((e) => e.message);
 
   const parts = [];
   if (note) parts.push(note);
   if (attributes.length) parts.push(attributes.join("\n"));
   if (properties.length) parts.push(properties.join("\n"));
-  if (extra.metafields.length) {
-    parts.push(extra.metafields.map((m) => `${m.key}: ${m.value}`).join("\n"));
+  if (metafields.length) {
+    parts.push(metafields.map((m) => `${m.key}: ${m.value}`).join("\n"));
   }
-  if (extra.comments.length) parts.push(extra.comments.join("\n"));
+  if (comments.length) parts.push(comments.join("\n"));
 
   return {
     name,
@@ -266,8 +375,8 @@ async function getOrderContext(orderName) {
     notes: parts.join("\n").trim(),
     note,
     properties,
-    metafields: extra.metafields,
-    comments: extra.comments,
+    metafields,
+    comments,
     createdAt: order.created_at,
     lineItems: (order.line_items || []).map((i) => ({
       title: i.title,
@@ -275,71 +384,6 @@ async function getOrderContext(orderName) {
       variant: i.variant_title || null,
     })),
   };
-}
-
-/**
- * Lee metafields y comentarios del timeline via GraphQL.
- *
- * @param {string} name Nombre del pedido (MON3007).
- * @returns {Promise<{metafields: object[], comments: string[]}>}
- */
-async function getOrderExtras(name) {
-  const query = `query ($name: String!) {
-    orders(first: 1, query: "name:$name") {
-      edges {
-        node {
-          metafields(first: 30) { edges { node { namespace key type value } } }
-          events(first: 50) {
-            edges {
-              node {
-                __typename
-                ... on CommentEvent { message }
-                ... on BasicEvent { message }
-              }
-            }
-          }
-        }
-      }
-    }
-  }`;
-
-  const url = `https://${SHOPIFY_SHOP}.myshopify.com/admin/api/${API_VERSION}/graphql.json`;
-  const doRequest = async (token) =>
-    fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Shopify-Access-Token": token,
-      },
-      body: JSON.stringify({ query, variables: { name } }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-
-  let token = await getAccessToken();
-  let response = await doRequest(token);
-  if (response.status === 401) {
-    token = await getAccessToken({ force: true });
-    response = await doRequest(token);
-  }
-
-  const data = await response.json().catch(() => ({}));
-  if (data.errors) {
-    throw new Error(`Shopify GraphQL: ${JSON.stringify(data.errors).slice(0, 200)}`);
-  }
-
-  const node = data?.data?.orders?.edges?.[0]?.node;
-  if (!node) return { metafields: [], comments: [] };
-
-  const metafields = (node.metafields?.edges || [])
-    .map((e) => e.node)
-    .filter((m) => m && m.value);
-
-  const comments = (node.events?.edges || [])
-    .map((e) => e.node)
-    .filter((e) => e && e.__typename === "CommentEvent" && e.message)
-    .map((e) => e.message);
-
-  return { metafields, comments };
 }
 
 /**
@@ -378,4 +422,5 @@ module.exports = {
   getOrder,
   getOrderContext,
   getGrantedScopes,
+  graphql,
 };
