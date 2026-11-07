@@ -76,8 +76,23 @@ function phonesMatch(a, b) {
  * @returns {Promise<object|null>} Primer envio encontrado, o null.
  */
 async function fetchShipmentFromEnvia(trackingNumbers) {
+  const list = await fetchShipmentsFromEnvia(trackingNumbers);
+  return list[0] || null;
+}
+
+/**
+ * Consulta TODOS los envios de Envia para una lista de seguimientos.
+ *
+ * Ojo: Envia devuelve un objeto por cada trackingNumber enviado, asi que
+ * quedarse solo con el primero (como hacia antes) hacia que la busqueda
+ * por telefono comparara contra un unico envio de 30.
+ *
+ * @param {string|string[]} trackingNumbers Numero(s) de seguimiento.
+ * @returns {Promise<object[]>} Lista de envios crudos (puede estar vacia).
+ */
+async function fetchShipmentsFromEnvia(trackingNumbers) {
   const key = process.env.ENVIA_API_KEY;
-  if (!key || !trackingNumbers) return null;
+  if (!key || !trackingNumbers) return [];
 
   const list = Array.isArray(trackingNumbers) ? trackingNumbers : [trackingNumbers];
 
@@ -92,9 +107,9 @@ async function fetchShipmentFromEnvia(trackingNumbers) {
     });
 
     const data = await response.json().catch(() => ({}));
-    if (data.error || !Array.isArray(data.data) || data.data.length === 0) return null;
+    if (data.error || !Array.isArray(data.data)) return [];
 
-    return data.data[0] || null;
+    return data.data;
   } catch (error) {
     console.error("Error consultando Envia:", error.message);
     return null;
@@ -144,26 +159,96 @@ function normalizeShipment(raw) {
  * Extrae un numero de pedido del texto del cliente.
  * Acepta variantes como "MON3007", "3007", "mon-3007", "#3007".
  *
+ * Un numero de 8-9 digitos NO se considera pedido: en Chile es un
+ * telefono, y se maneja por separado (ver extractPhone). Antes un
+ * telefono como "9689 1362" terminaba como pedido "MON9689".
+ *
  * @param {string} text Texto del cliente.
  * @returns {string|null} ID de pedido normalizado ("MON3007") o null.
  */
 function extractOrderId(text) {
   if (!text) return null;
 
-  const patterns = [
+  // Formas explicitas: siempre ganan.
+  const explicit = [
     /\bMON[\s\-_]*(\d{3,})\b/i,
     /\b(?:pedido|orden|order|#)\s*[:\-]?\s*(\d{3,})\b/i,
-    /\b(\d{4,})\b/,
   ];
-
-  for (const re of patterns) {
+  for (const re of explicit) {
     const m = text.match(re);
     if (m) {
       const digits = m[1];
       return /^\d+$/.test(digits) ? `MON${digits}` : digits.toUpperCase();
     }
   }
+
+  // Fallback: un numero suelto de 4 a 7 digitos. Solo si el mensaje NO
+  // trae un telefono, para no partir un numero de 8-9 digitos por la mitad.
+  if (extractPhone(text)) return null;
+
+  const loose = text.match(/\b(\d{4,7})\b/);
+  if (loose) return `MON${loose[1]}`;
+
   return null;
+}
+
+/**
+ * Extrae un telefono chileno del texto del cliente.
+ *
+ * Acepta los formatos habituales:
+ *   +56 9 9689 1362 | 56 9 9689 1362 | 9 9689 1362 | 9689 1362 | 96891362
+ *
+ * En Instagram es la via principal para identificar al cliente, porque
+ * ahi el id del usuario no es un telefono.
+ *
+ * @param {string} text Texto del cliente.
+ * @returns {string|null} Telefono en digitos (formato internacional sin +).
+ */
+function extractPhone(text) {
+  if (!text) return null;
+
+  // Secuencia de digitos con separadores opcionales. Los grupos son
+  // flexibles para cubrir "9 9689 1362", "968 913 62" y "96891362".
+  const seq = /(?<![\d+])(?:\+?56[\s.-]?)?\d{1,4}[\s.-]?\d{3,4}[\s.-]?\d{2,4}(?![\d])/g;
+  const matches = text.match(seq) || [];
+
+  for (const raw of matches) {
+    const digits = raw.replace(/\D/g, "");
+    // 8 digitos: fijo local o movil sin el 9 extra.
+    // 9 digitos: movil local (9 + 8).
+    // 10/11 digitos: con prefijo 56.
+    const valid =
+      digits.length === 8 ||
+      digits.length === 9 ||
+      ((digits.length === 10 || digits.length === 11) && digits.startsWith("56"));
+    if (valid) return digits;
+  }
+
+  return null;
+}
+
+/**
+ * Variantes con las que conviene comparar un telefono.
+ *
+ * En Chile el movil se escribe a veces con el 9 extra ("9 8689 1362") y
+ * a veces sin el ("8689 1362"). Si el numero se escribe con separadores
+ * raros, el parseo puede quitar ese 9, asi que se prueba tambien la
+ * variante alternativa.
+ *
+ * @param {string} phone Telefono en digitos.
+ * @returns {string[]} Telefonos a comparar.
+ */
+function phoneVariants(phone) {
+  const base = String(phone || "").replace(/\D/g, "");
+  if (!base) return [];
+
+  const variants = new Set([base]);
+  if (base.length === 9 && base.startsWith("9")) {
+    variants.add(base.slice(1)); // sin el 9 extra
+  } else if (base.length === 8) {
+    variants.add(`9${base}`); // con el 9 extra
+  }
+  return [...variants];
 }
 
 /**
@@ -184,68 +269,86 @@ async function findShipment({ phone, text, limit = 30 }) {
 
   // 1) Busqueda directa por numero de pedido
   if (orderId) {
-    const { data, error } = await supabase
+    const shipment = await findShipmentByOrderId(orderId);
+    if (shipment) {
+      return { shipment, orderId, reason: "order_id" };
+    }
+
+    // El pedido existe en la tabla pero sin envio generado.
+    const { data } = await supabase
       .from("order_tracking")
-      .select("order_id, tracking_id")
+      .select("order_id")
       .eq("order_id", orderId)
       .limit(1);
-
-    if (!error && data && data.length > 0 && data[0].tracking_id) {
-      const raw = await fetchShipmentFromEnvia(data[0].tracking_id);
-      const shipment = normalizeShipment(raw);
-      if (shipment) {
-        shipment.orderId = shipment.orderId || orderId;
-        return { shipment, orderId, reason: "order_id" };
-      }
+    if (data && data.length > 0) {
+      return { shipment: null, orderId, reason: "pedido_sin_envio" };
     }
+    // El pedido no existe: se sigue intentando por telefono, por si el
+    // cliente se equivoco de numero.
   }
 
   // 2) Busqueda por telefono sobre los envios recientes
+  const { shipment: byPhone, matches } = await findShipmentByPhone(phone, { limit });
+  if (byPhone) {
+    return {
+      shipment: byPhone,
+      orderId: byPhone.orderId || orderId,
+      reason: orderId ? "pedido_sin_match_telefono" : "telefono",
+      matches: matches.length,
+    };
+  }
+
+  // 3) No se pudo resolver
+  if (orderId) {
+    return { shipment: null, orderId, reason: "pedido_desconocido", matches: 0 };
+  }
+  return { shipment: null, orderId: null, reason: "sin_match", matches: 0 };
+}
+
+/**
+ * Busca envios asociados a un telefono.
+ *
+ * El telefono no esta en Supabase: vive en Envia (`destination.phone`).
+ * Por eso se consultan los ultimos envios y se compara el telefono del
+ * destinatario de cada uno.
+ *
+ * @param {string} phone Telefono del cliente.
+ * @param {object} [options] { limit } numero de envios recientes a revisar.
+ * @returns {Promise<{shipment: object|null, matches: object[]}>}
+ *   shipment = el envio mas reciente que coincide; matches = todos los que
+ *   coinciden (puede haber mas de uno si el cliente tiene varios pedidos).
+ */
+async function findShipmentByPhone(phone, { limit = 30 } = {}) {
+  const empty = { shipment: null, matches: [] };
+  if (!phone) return empty;
+
   const { data: tracks, error: tracksError } = await supabase
     .from("order_tracking")
     .select("order_id, tracking_id")
     .order("id", { ascending: false })
     .limit(limit);
 
-  if (tracksError || !tracks || tracks.length === 0) {
-    return { shipment: null, orderId, reason: "sin_datos" };
-  }
+  if (tracksError || !tracks || tracks.length === 0) return empty;
 
   const trackingNumbers = tracks.map((t) => t.tracking_id).filter(Boolean);
-  if (trackingNumbers.length === 0) {
-    return { shipment: null, orderId, reason: "sin_tracking" };
-  }
+  if (trackingNumbers.length === 0) return empty;
 
-  const raws = await fetchShipmentFromEnvia(trackingNumbers);
-  const list = Array.isArray(raws) ? raws : raws ? [raws] : [];
-
-  // La API puede devolver varios envios: se procesan todos
+  const raws = await fetchShipmentsFromEnvia(trackingNumbers);
   const candidates = [];
-  for (const raw of list) {
+  for (const raw of raws || []) {
     const s = normalizeShipment(raw);
     if (s) candidates.push(s);
   }
 
-  if (candidates.length === 0) {
-    return { shipment: null, orderId, reason: "envia_sin_datos" };
-  }
+  const matches = candidates.filter((s) => {
+    const variants = phoneVariants(phone);
+    return variants.some((v) => phonesMatch(s.customerPhone, v));
+  });
+  if (matches.length === 0) return empty;
 
-  const match = candidates.find((s) => phonesMatch(s.customerPhone, phone));
-  if (match) {
-    return { shipment: match, orderId: match.orderId || orderId, reason: "telefono" };
-  }
-
-  // 3) Ultimo recurso: si el mensaje trae un pedido explicito, se devuelve ese
-  // aunque no haya coincidencia de telefono (el cliente podria estar desde
-  // otro numero).
-  if (orderId) {
-    const byOrder = candidates.find((s) => (s.orderId || "").toUpperCase() === orderId);
-    if (byOrder) {
-      return { shipment: byOrder, orderId, reason: "pedido_sin_match_telefono" };
-    }
-  }
-
-  return { shipment: null, orderId, reason: "sin_match" };
+  // El mas reciente primero: `order_tracking` viene ordenado de mas nuevo a
+  // mas viejo y Envia respeta ese orden.
+  return { shipment: matches[0], matches };
 }
 
 /**
@@ -277,8 +380,12 @@ module.exports = {
   normalizePhone,
   phonesMatch,
   fetchShipmentFromEnvia,
+  fetchShipmentsFromEnvia,
   normalizeShipment,
   extractOrderId,
+  extractPhone,
+  phoneVariants,
   findShipment,
   findShipmentByOrderId,
+  findShipmentByPhone,
 };

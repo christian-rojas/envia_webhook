@@ -12,6 +12,7 @@ const { saveShipmentData, saveShipmentDataWithEnvia } = require("./supa.js");
 const meta = require("./meta.js");
 const ai = require("./ai.js");
 const orders = require("./orders.js");
+const conversation = require("./conversation.js");
 dotenv.config();
 
 // Log global de errores no capturados: sin esto, una excepcion en una
@@ -573,25 +574,44 @@ async function handleInboundMessage(message, sender = meta.sendTextMessage) {
   }
 
   // 2) Resolver pedido: por numero de pedido en el texto o por telefono.
-  const { shipment, orderId, reason } = await orders.findShipment({
-    phone: from,
+  //    En WhatsApp el `from` YA es el telefono del cliente, asi que no hace
+  //    falta pedirle ningun dato para identificarlo.
+  const phoneInText = orders.extractPhone(text);
+  const { shipment, orderId, reason, matches } = await orders.findShipment({
+    phone: phoneInText || from,
     text,
   });
 
-  console.log(`[meta] busqueda: reason=${reason} orderId=${orderId || "n/d"}`);
+  console.log(
+    `[meta] busqueda: reason=${reason} orderId=${orderId || "n/d"} ` +
+      `matches=${matches || 0}`
+  );
+
+  // Se recuerda el pedido para que los mensajes siguientes no repitan.
+  if (orderId) conversation.remember(from, { orderId, phone: from });
 
   // 3) Armar contexto para la IA.
   let context;
   if (shipment) {
     context = ai.buildShipmentContext(shipment);
-  } else if (orderId) {
+    if (matches > 1) {
+      context +=
+        `\n\nNOTA: este cliente tiene ${matches} envios. Estas respondiendo ` +
+        `por el MAS RECIENTE (${orderId}). Menciona que tiene otros pedidos ` +
+        `y pide que confirme si es ese.`;
+    }
+  } else if (reason === "pedido_sin_envio") {
     context =
-      `No se encontro informacion de envio para el pedido ${orderId}. ` +
-      `El pedido puede no tener envio generado todavia.`;
+      `El pedido ${orderId} existe pero todavia NO tiene un envio generado ` +
+      `(todavia no se ha enviado). Pregunta si ya le informamos el numero de ` +
+      `seguimiento y ofrece pasar con un asesor.`;
   } else {
-    context =
-      "No se encontro ningun pedido asociado a este numero de telefono. " +
-      "Pide al cliente el numero de pedido (formato MON-XXXX).";
+    context = ai.buildMissingDataContext({
+      reason,
+      orderId,
+      matches,
+      channel: "whatsapp",
+    });
   }
 
   // 4) Respuesta de la IA.
@@ -708,16 +728,107 @@ app.post("/webhook/instagram", async (req, res) => {
 });
 
 /**
+ * Resuelve el pedido de un cliente de Instagram, en cascada:
+ *
+ *   1) Numero de pedido explicito en el texto  (MON-3007 / "pedido 3007")
+ *   2) Telefono en el texto                     (+56 9 9689 1362)
+ *   3) Lo que el cliente dijo antes en esta conversacion
+ *   4) Nada -> se le pide un dato
+ *
+ * En Instagram el id del usuario NO es un telefono, asi que (1) y (2) son
+ * las unicas vias de identificarlo sin pedirle nada.
+ *
+ * @param {object} message Mensaje normalizado.
+ * @returns {Promise<object>} { shipment, orderId, phone, reason, matches }
+ */
+async function resolveInstagramOrder(message) {
+  const text = message.text;
+  const key = message.customerId;
+
+  // 1) Numero de pedido explicito
+  const orderId = orders.extractOrderId(text);
+  if (orderId) {
+    const shipment = await orders.findShipmentByOrderId(orderId);
+    if (shipment) {
+      conversation.remember(key, { orderId: shipment.orderId || orderId });
+      return {
+        shipment,
+        orderId: shipment.orderId || orderId,
+        reason: "pedido",
+        matches: 1,
+      };
+    }
+    const { data } = await supabase
+      .from("order_tracking")
+      .select("order_id")
+      .eq("order_id", orderId)
+      .limit(1);
+    if (data && data.length > 0) {
+      // El pedido existe pero no tiene envio generado todavia.
+      conversation.remember(key, { orderId });
+      return { shipment: null, orderId, reason: "pedido_sin_envio", matches: 0 };
+    }
+    return { shipment: null, orderId, reason: "pedido_desconocido", matches: 0 };
+  }
+
+  // 2) Telefono en el texto
+  const phone = orders.extractPhone(text);
+  if (phone) {
+    const { shipment, matches } = await orders.findShipmentByPhone(phone);
+    if (shipment) {
+      conversation.remember(key, { orderId: shipment.orderId, phone });
+      return {
+        shipment,
+        orderId: shipment.orderId,
+        phone,
+        reason: matches.length > 1 ? "telefono_multiples" : "telefono",
+        matches: matches.length,
+      };
+    }
+    conversation.remember(key, { phone });
+    return { shipment: null, phone, reason: "telefono_sin_match", matches: 0 };
+  }
+
+  // 3) Memoria de la conversacion
+  const memo = conversation.get(key);
+  if (memo?.orderId) {
+    const shipment = await orders.findShipmentByOrderId(memo.orderId);
+    if (shipment) {
+      return {
+        shipment,
+        orderId: memo.orderId,
+        reason: "memoria_pedido",
+        matches: 1,
+      };
+    }
+  }
+  if (memo?.phone) {
+    const { shipment, matches } = await orders.findShipmentByPhone(memo.phone);
+    if (shipment) {
+      return {
+        shipment,
+        orderId: shipment.orderId,
+        phone: memo.phone,
+        reason: matches.length > 1 ? "telefono_multiples" : "memoria_telefono",
+        matches: matches.length,
+      };
+    }
+  }
+
+  // 4) Sin ningun dato
+  return { shipment: null, reason: "sin_datos", matches: 0 };
+}
+
+/**
  * Procesa un mensaje de Instagram. Reusa la logica del agente, pero la
  * busqueda de pedidos no puede usar el id numerico del usuario de Instagram
- * como telefono, asi que se exige el numero de pedido en el texto.
+ * como telefono, asi que se aceptan el numero de pedido o el telefono.
  *
  * @param {object} message Mensaje normalizado.
  * @param {Function} sender Funcion para enviar la respuesta.
  */
 async function handleInstagramMessage(message, sender) {
   const { text } = message;
-  const t0 = Date.now();
   console.log(`[instagram] mensaje: ${text}`);
 
   if (ai.wantsHuman(text)) {
@@ -730,29 +841,39 @@ async function handleInstagramMessage(message, sender) {
     return;
   }
 
-  const orderId = orders.extractOrderId(text);
+  const resolved = await resolveInstagramOrder(message);
+  console.log(
+    `[instagram] busqueda: reason=${resolved.reason} ` +
+      `orderId=${resolved.orderId || "n/d"} matches=${resolved.matches || 0}`
+  );
 
-  let shipment = null;
-  if (orderId) {
-    try {
-      shipment = await orders.findShipmentByOrderId(orderId);
-      console.log(`[instagram] shipment: ${shipment ? shipment.status : "no encontrado"}`);
-    } catch (error) {
-      throw error;
-    }
-  }
-
+  // Armar contexto para la IA.
   let context;
-  if (shipment) {
-    context = ai.buildShipmentContext(shipment);
-  } else if (orderId) {
+  if (resolved.shipment) {
+    context = ai.buildShipmentContext(resolved.shipment);
+
+    // Si el telefono coincide con varios envios, se le avisa al cliente
+    // cual se esta respondiendo y se le da la lista.
+    if (resolved.matches > 1) {
+      context +=
+        `\n\nNOTA: este cliente tiene ${resolved.matches} envios asociados ` +
+        `a su telefono. Estas respondiendo por el MAS RECIENTE ` +
+        `(${resolved.orderId}). Menciona que tiene otros pedidos y pide que ` +
+        `confirme si es ese.`;
+    }
+  } else if (resolved.reason === "pedido_sin_envio") {
     context =
-      `No se encontro informacion de envio para el pedido ${orderId}. ` +
-      `El pedido puede no tener envio generado todavia.`;
+      `El pedido ${resolved.orderId} existe pero todavia NO tiene un envio ` +
+      `generado (todavia no se ha enviado). Pregunta si ya le informamos el ` +
+      `numero de seguimiento y ofrece pasar con un asesor.`;
   } else {
-    context =
-      "No se encontro ningun pedido. " +
-      "Pide al cliente el numero de pedido (formato MON-XXXX) para poder ayudarte.";
+    context = ai.buildMissingDataContext({
+      reason: resolved.reason,
+      orderId: resolved.orderId,
+      matches: resolved.matches,
+      channel: "instagram",
+      greeting: ai.isGreetingOnly(text),
+    });
   }
 
   const { ok, reply, error } = await ai.generateReply({ userText: text, context });
@@ -774,3 +895,7 @@ async function handleInstagramMessage(message, sender) {
 }
 
 module.exports = app;
+// Se exponen para poder probarlos sin levantar el servidor.
+module.exports.handleInstagramMessage = handleInstagramMessage;
+module.exports.handleInboundMessage = handleInboundMessage;
+module.exports.resolveInstagramOrder = resolveInstagramOrder;

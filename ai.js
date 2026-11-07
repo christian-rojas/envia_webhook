@@ -46,6 +46,128 @@ function wantsHuman(text) {
   return HUMAN_INTENT_PATTERNS.some((re) => re.test(text));
 }
 
+/**
+ * Palabras que indican que el cliente pregunta por un pedido o su envio.
+ * Se usan para distinguir "hola" de "que paso con mi pedido?".
+ */
+const TRACKING_INTENT_PATTERNS = [
+  /\bmi (pedido|orden|compra|envio|entrega)\b/i,
+  /\b(pedido|orden|compra|envio|entrega)\b/i,
+  /\b(donde|cuando|que)\s+(esta|llega|llegara|llego|llegó|pasó)\b/i,
+  /\b(llego|llegó|recibí|recibio|me llego)\b/i,
+  /\bseguimiento\b/i,
+  /\btracking\b/i,
+  /\bnumero de (pedido|seguimiento)\b/i,
+  /\bestado\b/i,
+  /\b(aun no|todavia no) me (llega|llegó)\b/i,
+];
+
+/**
+ * Saludo puro: no contiene ninguna peticion.
+ */
+const GREETING_ONLY_PATTERNS = [
+  /^\s*(hola|holi|holis|buenas|buenos dias|buenas tardes|buenas noches|hey|hi|hello|que tal|que onda|saludos)\b[\s!.,¿?]*$/i,
+];
+
+/**
+ * Detecta si el mensaje pregunta por el estado de un pedido.
+ *
+ * @param {string} text Texto del cliente.
+ * @returns {boolean}
+ */
+function isTrackingIntent(text) {
+  if (!text) return false;
+  return TRACKING_INTENT_PATTERNS.some((re) => re.test(text));
+}
+
+/**
+ * Detecta si el mensaje es solo un saludo (sin peticion).
+ *
+ * @param {string} text Texto del cliente.
+ * @returns {boolean}
+ */
+function isGreetingOnly(text) {
+  if (!text) return false;
+  return GREETING_ONLY_PATTERNS.some((re) => re.test(text));
+}
+
+/**
+ * Contexto para cuando NO se pudo identificar el pedido.
+ *
+ * Distingue entre "no lo buscamos" y "lo buscamos y no existe", porque la
+ * respuesta al cliente es muy distinta en cada caso.
+ *
+ * @param {object} params
+ * @param {string} [params.reason] Motivo por el que no se pudo resolver.
+ * @param {string} [params.orderId] Pedido que dio el cliente.
+ * @param {number} [params.matches] Cuantos envios coinciden con el telefono.
+ * @param {string} [params.channel] 'instagram' | 'whatsapp'
+ * @param {boolean} [params.greeting] El mensaje fue solo un saludo.
+ * @returns {string}
+ */
+function buildMissingDataContext({ reason, orderId, matches, channel, greeting } = {}) {
+  const lines = [];
+
+  if (greeting) {
+    lines.push(
+      `El cliente solo saluda. Saluda de vuelta y PIDE DIRECTAMENTE el dato ` +
+        `que falta (no preguntes "en que puedo ayudarte" sin decir que ` +
+        `datos necesitas).`
+    );
+  }
+
+  switch (reason) {
+    case "pedido_desconocido":
+      lines.push(
+        `Se busca el pedido ${orderId} pero NO existe en la base de datos. ` +
+          `Pide al cliente que revise el numero de pedido (formato MON-3007).`
+      );
+      break;
+
+    case "telefono_multiples":
+      lines.push(
+        `Ese telefono tiene ${matches} pedidos/envios. ` +
+          `Pide al cliente que confirme CUAL pedido (numero MON-XXXX) quiere consultar.`
+      );
+      break;
+
+    case "telefono_sin_match":
+      lines.push(
+        `Se busca un envio asociado al telefono del cliente pero no hay ninguno. ` +
+          `Pide el numero de pedido (formato MON-3007) para poder verificarlo.`
+      );
+      break;
+
+    case "pedido_sin_match_telefono":
+      lines.push(
+        `El pedido ${orderId} fue encontrado, pero el telefono del remitente no ` +
+          `coincide con el del destinatario del envio.`
+      );
+      break;
+
+    default:
+      lines.push(
+        `Todavia NO se ha identificado ningun pedido del cliente. ` +
+          `No se ha buscado nada todavia: falta un dato.`
+      );
+      break;
+  }
+
+  if (channel === "instagram") {
+    // En Instagram no se conoce el telefono del cliente, asi que se ofrecen
+    // las dos vias: el numero de pedido o el telefono de compra.
+    lines.push(
+      `Pide el numero de pedido (formato MON-3007) y Ofrece como alternativa ` +
+        `el telefono con el que hizo la compra. Elige una, no insistas con ambas.`
+    );
+  } else {
+    // En WhatsApp ya se conoce el telefono del cliente: solo falta el pedido.
+    lines.push(`Pide el numero de pedido (formato MON-3007).`);
+  }
+
+  return lines.join("\n");
+}
+
 const SYSTEM_PROMPT = `Eres el asistente de WhatsApp de Mondano, una marca chilena de moda urbana.
 
 Tu unica funcion es responder preguntas sobre el estado y la fecha de entrega de un pedido.
@@ -58,6 +180,8 @@ REGLAS ESTRICTAS:
 5. Si el cliente saluda sin pedir informacion, responde con un saludo corto y preguntale como puedes ayudarte.
 6. Nunca prometas fechas que no esten en el contexto.
 7. Nunca inventes politicas de la tienda (plazos de envio, costos, formas de pago) que no esten en el contexto.
+8. Cuando el contexto indique que falta un dato para identificar el pedido, pide el numero de pedido (formato MON-XXXX). Si el contexto indica que puedes ofrecer el telefono de compra como alternativa, ofrecelo en la misma frase, sin pedir los dos datos por separado.
+9. Si el contexto indica que el cliente tiene varios pedidos, pidele que confirme cual.
 
 FORMATO DE RESPUESTA: solo el texto que se envia por WhatsApp. Sin prefijo, sin comillas, sin markdown.`;
 
@@ -88,8 +212,8 @@ function buildShipmentContext(shipment) {
   if (shipment.estimatedDelivery) {
     lines.push(`Fecha estimada de entrega: ${shipment.estimatedDelivery}`);
   }
-  if (shipment.currentStatus) {
-    lines.push(`Estado actual: ${shipment.currentStatus}`);
+  if (shipment.currentStatus || shipment.status) {
+    lines.push(`Estado actual: ${shipment.currentStatus || shipment.status}`);
   }
   if (shipment.delivered) {
     lines.push("El pedido fue entregado.");
@@ -170,6 +294,9 @@ module.exports = {
   XAI_MODEL,
   SYSTEM_PROMPT,
   wantsHuman,
+  isTrackingIntent,
+  isGreetingOnly,
   buildShipmentContext,
+  buildMissingDataContext,
   generateReply,
 };
