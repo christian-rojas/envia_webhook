@@ -124,6 +124,15 @@ function buildMissingDataContext({ reason, orderId, matches, channel, greeting }
       );
       break;
 
+    case "pedido_no_encontrado":
+      lines.push(
+        `No se tiene informacion del pedido ${orderId}. Puede que el numero ` +
+          `este mal escrito, o que todavia no tenga etiqueta de envio. ` +
+          `NO le digas al cliente que el pedido no existe. Pide que confirme ` +
+          `el numero (formato MON3007) y ofrece pasar con un asesor.`
+      );
+      break;
+
     case "pedido_sin_envio":
       lines.push(
         `El pedido ${orderId} existe pero no tiene envio generado todavia.`

@@ -39,7 +39,7 @@ function looksLikeManufacturing(notes) {
 }
 
 /**
- * Busca el proceso de fabricacion del pedido en Shopify.
+ * Busca las notas de fabricacion del pedido en Shopify.
  *
  * Solo tiene sentido mientras el paquete NO fue retirado por la transportista:
  * una vez que salio, la fabricacion ya termino.
@@ -55,7 +55,9 @@ async function getManufacturingNotes(resolved) {
   if (!orders.isNotPickedUp(resolved.shipment)) return "";
 
   try {
-    const ctx = await shopify.getOrderContext(orderId);
+    // Si ya se consulto Shopify, se reutiliza (evita una segunda llamada).
+    const ctx = resolved.shopify || (await shopify.getOrderContext(orderId));
+
     if (!ctx.found) {
       console.log(
         `[shopify] pedido ${orderId} no encontrado (¿fuera de la ventana de 60 dias?)`
@@ -79,6 +81,22 @@ async function getManufacturingNotes(resolved) {
     console.error(`[shopify] error leyendo ${orderId}:`, error.message);
     return "";
   }
+}
+
+/**
+ * Indica si el pedido esta en nuestra tabla de envios (Supabase).
+ * Sirve para saber que el pedido existe aunque no tenga etiqueta en Envia.
+ *
+ * @param {string} orderId Nombre del pedido (MON3007).
+ * @returns {Promise<boolean>}
+ */
+async function orderExistsInSupabase(orderId) {
+  const { data, error } = await supabase
+    .from("order_tracking")
+    .select("order_id")
+    .eq("order_id", orderId)
+    .limit(1);
+  return !error && Array.isArray(data) && data.length > 0;
 }
 dotenv.config();
 
@@ -822,17 +840,32 @@ async function resolveInstagramOrder(message) {
         reason: "pedido",
       };
     }
-    const { data } = await supabase
-      .from("order_tracking")
-      .select("order_id")
-      .eq("order_id", orderId)
-      .limit(1);
-    if (data && data.length > 0) {
-      // El pedido existe pero no tiene envio generado todavia.
+
+    // Sin envio en Envia: el pedido puede existir y estar en fabricacion.
+    // Se consulta Shopify, que es la fuente de verdad del pedido.
+    const ctx = await shopify.getOrderContext(orderId).catch((error) => {
+      console.error(`[shopify] error leyendo ${orderId}:`, error.message);
+      return null;
+    });
+
+    if (ctx && ctx.found) {
+      conversation.remember(key, { orderId });
+      return {
+        shipment: null,
+        orderId,
+        reason: "pedido_sin_envio",
+        shopify: ctx,
+      };
+    }
+
+    // El pedido no esta en Shopify (o no se pudo leer). Se comprueba
+    // nuestra tabla de envios: si esta ahi, el pedido existe.
+    if (await orderExistsInSupabase(orderId)) {
       conversation.remember(key, { orderId });
       return { shipment: null, orderId, reason: "pedido_sin_envio" };
     }
-    return { shipment: null, orderId, reason: "pedido_desconocido" };
+
+    return { shipment: null, orderId, reason: "pedido_no_encontrado" };
   }
 
   // 2) Memoria de la conversacion
@@ -846,6 +879,16 @@ async function resolveInstagramOrder(message) {
         reason: "memoria_pedido",
       };
     }
+    const ctx = await shopify.getOrderContext(memo.orderId).catch(() => null);
+    if (ctx && ctx.found) {
+      return {
+        shipment: null,
+        orderId: memo.orderId,
+        reason: "pedido_sin_envio",
+        shopify: ctx,
+      };
+    }
+    return { shipment: null, orderId: memo.orderId, reason: "pedido_sin_envio" };
   }
 
   // 3) Sin ningun dato
@@ -887,9 +930,10 @@ async function handleInstagramMessage(message, sender) {
     context = ai.buildShipmentContext(resolved.shipment);
   } else if (resolved.reason === "pedido_sin_envio") {
     context =
-      `El pedido ${resolved.orderId} existe pero todavia NO tiene un envio ` +
-      `generado (todavia no se ha enviado). Pregunta si ya le informamos el ` +
-      `numero de seguimiento y ofrece pasar con un asesor.`;
+      `El pedido ${resolved.orderId} EXISTE, pero todavia NO tiene un envio ` +
+      `generado: sigue en proceso en el taller. No le digas que no lo ` +
+      `encontramos. Pregunta si ya le informamos el numero de seguimiento y ` +
+      `ofrece pasar con un asesor si es urgente.`;
   } else {
     context = ai.buildMissingDataContext({
       reason: resolved.reason,
