@@ -562,14 +562,19 @@ app.get("/health", (req, res) => {
       modelo: process.env.XAI_MODEL || "grok-4.7",
     },
     whatsapp: {
-      // Configurado = hay credenciales. Para que funcione de verdad el
-      // numero debe estar registrado en WhatsApp Business y la app
-      // suscrita a los webhooks del WABA.
-      configurado: Boolean(
-        process.env.META_ACCESS_TOKEN && process.env.META_PHONE_NUMBER_ID
-      ),
-      waba_id: process.env.META_WABA_ID || null,
-      phone_number_id: process.env.META_PHONE_NUMBER_ID || null,
+      // Configurado = hay credenciales reales (no el placeholder PENDIENTE).
+      // Para que funcione de verdad el numero debe estar registrado en
+      // WhatsApp Business y la app suscrita a los webhooks del WABA.
+      configurado:
+        meta.isConfigured(process.env.META_ACCESS_TOKEN) &&
+        meta.isConfigured(process.env.META_PHONE_NUMBER_ID) &&
+        meta.isConfigured(process.env.META_WABA_ID),
+      waba_id: meta.isConfigured(process.env.META_WABA_ID)
+        ? process.env.META_WABA_ID
+        : null,
+      phone_number_id: meta.isConfigured(process.env.META_PHONE_NUMBER_ID)
+        ? process.env.META_PHONE_NUMBER_ID
+        : null,
     },
     envios: {
       supabase: Boolean(process.env.SUPABASE_URL),
