@@ -180,7 +180,62 @@ check("el contexto lleva los datos clave", () => {
   }
 });
 
-console.log("\n\x1b[1m7) [RED] Busqueda real por pedido y por telefono\x1b[0m");
+console.log("\n\x1b[1m7) Filtrado de notas internas\x1b[0m");
+
+const { filterRelevantNotes, looksLikeManufacturing } = require("../index.js");
+
+check("'CON GORRO' es relevante (personalizacion)", () =>
+  assert.deepStrictEqual(filterRelevantNotes("CON GORRO"), ["CON GORRO"]));
+
+check("'EN TALLER' es relevante (etapa)", () =>
+  assert.deepStrictEqual(filterRelevantNotes("EN TALLER"), ["EN TALLER"]));
+
+check("'Dejar en conserjería' NO es relevante (operativa)", () =>
+  assert.deepStrictEqual(filterRelevantNotes("Dejar en conserjería"), []));
+
+check("'Orden por cambio... ticket #R1334' NO es relevante (interna)", () =>
+  assert.deepStrictEqual(
+    filterRelevantNotes("Orden por cambio en orden MON4620 (ticket #R1334)"),
+    []
+  ));
+
+check("'REEMBOLSADO' NO es relevante", () =>
+  assert.deepStrictEqual(filterRelevantNotes("REEMBOLSADO"), []));
+
+check("'NUEVO ENVIO' NO es relevante", () =>
+  assert.deepStrictEqual(filterRelevantNotes("NUEVO ENVIO"), []));
+
+check("'CORREGIR TALLA A M' es relevante", () =>
+  assert.deepStrictEqual(filterRelevantNotes("CORREGIR TALLA A M"), ["CORREGIR TALLA A M"]));
+
+check("filtra linea por linea, no el bloque entero", () => {
+  const rel = filterRelevantNotes("CON GORRO\nOrden por cambio en orden MON4620 (ticket #R1334)");
+  assert.deepStrictEqual(rel, ["CON GORRO"]);
+});
+
+check("'EN TALLER' es etapa; 'CON GORRO' es personalizacion", () => {
+  assert.strictEqual(looksLikeManufacturing("EN TALLER"), true);
+  assert.strictEqual(looksLikeManufacturing("CON GORRO"), false);
+});
+
+check("el prompt de personalizacion pide mencionar el gorro", () => {
+  const ctx = ai.buildProcessContext("CON GORRO", { processDetails: false });
+  assert.ok(ctx.includes("CON GORRO"), ctx);
+  assert.ok(/indicaciones especiales/i.test(ctx), ctx);
+});
+
+check("sin notas utiles, el prompt dice solo 'en confeccion'", () => {
+  const ctx = ai.buildProcessContext("", { processDetails: false });
+  assert.ok(/CONFECCION/i.test(ctx), ctx);
+  assert.ok(/NO inventes/i.test(ctx), ctx);
+});
+
+check("el prompt nunca pide el telefono", () => {
+  const ctx = ai.buildProcessContext("CON GORRO", { processDetails: false });
+  assert.ok(!/telefono/i.test(ctx), ctx);
+});
+
+console.log("\n\x1b[1m8) [RED] Busqueda real por pedido y por telefono\x1b[0m");
 
 (async () => {
   try {

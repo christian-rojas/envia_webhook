@@ -15,9 +15,8 @@ const orders = require("./orders.js");
 const shopify = require("./shopify.js");
 const conversation = require("./conversation.js");
 
-// Palabras que delatan que una nota habla del proceso de fabricacion.
-// Si la nota del pedido no menciona ninguna, no se le manda nada al cliente:
-// las notas operativas (conserjeria, cambios de pedido) son internas.
+// Palabras que delatan que una nota habla del proceso de fabricacion
+// (corte, planchado, ensamblaje...).
 const MANUFACTURING_KEYWORDS = (
   process.env.MANUFACTURING_KEYWORDS ||
   "taller,corte,elabora,planch,ensamblaj,costur,confecci,producc,tejid,serigraf,estampad,termin,listo,armado,montaje,acabado"
@@ -26,8 +25,51 @@ const MANUFACTURING_KEYWORDS = (
   .map((k) => k.trim().toLowerCase())
   .filter(Boolean);
 
+// Palabras que delatan una personalizacion del pedido (agregar gorro,
+// cambiar color o forro, correccion de talla...). Son indicaciones de
+// fabricacion que el cliente SI debe saber.
+const CUSTOM_KEYWORDS = (
+  process.env.CUSTOM_KEYWORDS ||
+  "gorro,color,forro,talla,relleno,ribete,bolsillo,cierre,cremallera,personalizado,especial,bordado,estampa,serigraf"
+)
+  .split(",")
+  .map((k) => k.trim().toLowerCase())
+  .filter(Boolean);
+
 /**
- * Indica si unas notas internas hablan del proceso de fabricacion.
+ * Indica si una nota interna es relevante para el cliente.
+ *
+ * Se filtran las notas operativas (cambios de pedido con ticket, notas de
+ * conserjeria, reembolsos) porque son internas y no aportan nada.
+ *
+ * @param {string} nota Una linea de nota.
+ * @returns {boolean}
+ */
+function isRelevantNote(nota) {
+  if (!nota) return false;
+  const lower = nota.toLowerCase();
+  return (
+    MANUFACTURING_KEYWORDS.some((k) => lower.includes(k)) ||
+    CUSTOM_KEYWORDS.some((k) => lower.includes(k))
+  );
+}
+
+/**
+ * Filtra las notas internas dejando solo las que le interesan al cliente.
+ *
+ * @param {string} notes Notas unidas.
+ * @returns {string[]} Lineas relevantes.
+ */
+function filterRelevantNotes(notes) {
+  if (!notes) return [];
+  return String(notes)
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter((s) => s && isRelevantNote(s));
+}
+
+/**
+ * Indica si unas notas internas hablan del proceso de manufactura.
  *
  * @param {string} notes Notas del pedido.
  * @returns {boolean}
@@ -72,12 +114,25 @@ async function getManufacturingNotes(resolved) {
       return vacio;
     }
 
-    const processDetails = looksLikeManufacturing(ctx.notes);
+    // Solo interesan las notas de fabricacion y las personalizaciones
+    // (agregar gorro, cambiar color, corregir talla...). Las operativas
+    // (ticket de cambio, conserjeria, reembolso) se descartan.
+    const relevantes = filterRelevantNotes(ctx.notes);
+
+    if (!relevantes.length) {
+      console.log(
+        `[shopify] pedido ${orderId}: sin notas relevantes -> se dice "en confeccion"`
+      );
+      return vacio;
+    }
+
+    const processDetails = looksLikeManufacturing(relevantes.join(" "));
     console.log(
-      `[shopify] pedido ${orderId}: notas ` +
-        (processDetails ? "DE FABRICACION" : "sin detalle de etapas (en confeccion)")
+      `[shopify] pedido ${orderId}: notas relevantes ` +
+        (processDetails ? "DE FABRICACION" : "de personalizacion") +
+        ` -> ${JSON.stringify(relevantes)}`
     );
-    return { notes: ctx.notes, processDetails };
+    return { notes: relevantes.join("\n"), processDetails };
   } catch (error) {
     // Un fallo de Shopify no debe tumbar la respuesta del bot.
     console.error(`[shopify] error leyendo ${orderId}:`, error.message);
@@ -978,3 +1033,6 @@ module.exports = app;
 module.exports.handleInstagramMessage = handleInstagramMessage;
 module.exports.handleInboundMessage = handleInboundMessage;
 module.exports.resolveInstagramOrder = resolveInstagramOrder;
+module.exports.filterRelevantNotes = filterRelevantNotes;
+module.exports.isRelevantNote = isRelevantNote;
+module.exports.looksLikeManufacturing = looksLikeManufacturing;

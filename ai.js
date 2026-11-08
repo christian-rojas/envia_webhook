@@ -154,40 +154,48 @@ function buildMissingDataContext({ reason, orderId, matches, channel, greeting }
 }
 
 /**
- * Contexto con las notas de fabricacion del pedido (notas internas de
- * Shopify).
+ * Contexto con las notas internas del pedido (notas de Shopify).
  *
  * Estas notas son informacion interna del taller. Se le dan al modelo para
  * que las traduzca a un mensaje para el cliente, nunca para copiarlas.
  *
  * Hay dos casos:
- *   - Las notas describen etapas (corte, planchado, ensamblaje...): se le
- *     pide que las cuente.
- *   - Las notas NO describen etapas: solo se dice que el pedido esta en
- *     confeccion, sin inventar nada.
+ *   - Las notas describen etapas o personalizaciones (agregar gorro, cambiar
+ *     color, corregir talla): se le pide que las cuente.
+ *   - No hay nada util: solo se dice que el pedido esta en confeccion.
  *
- * @param {string} notes Notas internas (puede ir vacio).
+ * @param {string} notes Notas internas relevantes (puede ir vacio).
  * @param {object} [options] { processDetails } las notas traen etapas.
  * @returns {string}
  */
 function buildProcessContext(notes, { processDetails = false } = {}) {
-  if (!processDetails) {
+  if (!notes) {
     return (
       `El pedido sigue en el taller, en CONFECCION: todavia no se ha entregado ` +
-      `a la transportista. NO hay detalle de etapas en las notas internas, asi ` +
-      `que NO inventes ninguna. Dile simplemente que el pedido esta en ` +
-      `confeccion.`
+      `a la transportista. NO hay detalle de etapas ni indicaciones especiales ` +
+      `en las notas internas, asi que NO inventes ninguna. Dile simplemente que ` +
+      `el pedido esta en confeccion.`
     );
   }
 
+  const extra =
+    processDetails
+      ? `en que etapa va la fabricacion (corte, elaboracion, planchado, ` +
+        `ensamblaje, etc.), tal como aparece en las notas.`
+      : `que indicaciones especiales le estamos aplicando al pedido (por ` +
+        `ejemplo, que le estamos agregando el gorro, o el color o la talla), ` +
+        `tal como aparece en las notas.`;
+
   return (
-    `NOTAS INTERNAS DE FABRICACION DEL PEDIDO (no son del cliente):\n` +
+    `NOTAS INTERNAS DEL PEDIDO (no son del cliente):\n` +
     `${notes}\n\n` +
-    `El cliente pregunto por su pedido. Indica de forma breve y amigable en ` +
-    `que etapa va la fabricacion (corte, elaboracion, planchado, ` +
-    `ensamblaje, etc.), tal como aparece en las notas. NO menciones ` +
-    `referencias internas (numeros de ticket, otros pedidos, notas de ` +
-    `logistica o de conserjeria) ni datos que no esten en las notas.`
+    `El cliente pregunto por su pedido. El pedido sigue en el taller, en ` +
+    `CONFECCION: todavia no se ha entregado a la transportista. ` +
+    `Cuentasele de forma breve y amigable ` +
+    extra +
+    ` Si las notas no aportan nada util, dile solo que esta en confeccion. ` +
+    `NO menciones referencias internas (numeros de ticket, otros pedidos, ` +
+    `notas de logistica o de conserjeria) ni datos que no esten en las notas.`
   );
 }
 
@@ -204,8 +212,8 @@ REGLAS ESTRICTAS:
 6. Nunca prometas fechas que no esten en el contexto.
 7. Nunca inventes politicas de la tienda (plazos de envio, costos, formas de pago) que no esten en el contexto.
 8. Cuando el contexto indique que falta un dato para identificar el pedido, pide SOLO el numero de pedido (formato MON3007). Nunca pidas el telefono del cliente ni el email.
-9. Escribe el numero de pedido sin guion: MON3007, nunca MON-3007.
-10. Si el CONTEXTO incluye NOTAS INTERNAS DE FABRICACION, mencionalas en el mismo mensaje, junto al estado del envio, como una Actualizacion de la fabricacion. Maximo 2 frases extra.
+9. Escribe el numero de pedido tal cual, sin guion y sin almohadilla: MON3007. Nunca MON-3007 ni #MON3007.
+10. Si el CONTEXTO incluye NOTAS INTERNAS DEL PEDIDO, mencionalas en el mismo mensaje, junto al estado del envio. Maximo 2 frases extra.
 
 FORMATO DE RESPUESTA: solo el texto que se envia por WhatsApp. Sin prefijo, sin comillas, sin markdown.`;
 
