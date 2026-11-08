@@ -67,6 +67,34 @@ async function main() {
 
   console.log("\n\x1b[1mSetup de WhatsApp Cloud API\x1b[0m");
 
+  // 0) Listar las cuentas de WhatsApp del negocio (necesita business_management)
+  if (process.argv.includes("--list-wabas")) {
+    const businessId = process.env.SHOPIFY_BUSINESS_ID || "111337664819723";
+    console.log(`\n0) Cuentas de WhatsApp del negocio ${businessId}...`);
+    const wabas = await graph(`${businessId}/owned_whatsapp_business_accounts`, {
+      params: {
+        fields: "id,name,account_review_status,phone_numbers{id,display_phone_number,verified_name,code_verification_status,status,quality_rating}",
+      },
+    });
+    if (wabas.body?.error) {
+      console.log(bad(wabas.body.error.message));
+      console.log(
+        "   (falta el scope business_management en el token)"
+      );
+    } else {
+      for (const w of wabas.body?.data || []) {
+        console.log(`   ${w.name}  id=${w.id}  (${w.account_review_status || "-"})`);
+        for (const p of w.phone_numbers || []) {
+          console.log(
+            `      ${p.display_phone_number}  id=${p.id}  ${p.verified_name || "(sin nombre)"}` +
+              `  ${p.status}  ${p.code_verification_status}  calidad=${p.quality_rating || "-"}`
+          );
+        }
+      }
+    }
+    return;
+  }
+
   // 1) Scopes
   console.log("\n1) Scopes del token...");
   const perms = await graph("me/permissions");
