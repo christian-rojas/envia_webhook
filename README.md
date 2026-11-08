@@ -102,6 +102,58 @@ no lo tiene. Para hacerlo durable, reemplazar el `Map` por una tabla de
 Supabase — la interfaz `get / remember / forget` no cambia (ver el SQL sugerido
 en el propio archivo).
 
+## WhatsApp (Fase 2)
+
+Ruta: `POST /webhook/meta` (la misma firma HMAC que Instagram).
+
+### Cómo identifica el bot el pedido
+
+En WhatsApp el `from` del webhook **es el teléfono del cliente**, así que el
+bot sabe de quién se trata sin preguntarle nada. Cascada:
+
+| # | Vía | Nota |
+|---|---|---|
+| 1 | Número de pedido en el texto | `MON3007`, `pedido 3007` |
+| 2 | Memoria de la conversación | Lo que dijo antes (30 min) |
+| 3 | **Pedidos del cliente por su teléfono** | Índice en memoria, TTL 30 min |
+| 4 | Se le pide el número de pedido | Formato `MON3007` |
+
+### De dónde sale el teléfono del cliente
+
+**No sirve el de Envia**: ahí va un teléfono de fábrica (el mismo en 20
+envíos). La única fuente real es `shipping_address.phone` de Shopify.
+
+Y la búsqueda por `phone:` de GraphQL **no filtra** (devuelve los pedidos más
+recientes sin filtrar), así que hay que indexar: `shopify.js` recorre los
+~3700 pedidos del historial y arma un `Map<teléfono, pedidos>` en memoria.
+Tarda ~7 s la primera vez y se reutiliza 30 minutos.
+
+### Setup
+
+```sh
+node scripts/setup_whatsapp.js <waba_id> <phone_number_id>
+```
+
+Verifica los scopes, muestra los números del WABA, suscribe la app a los
+eventos y comprueba la suscripción.
+
+Requisitos en el panel de Meta:
+
+1. El número registrado en **WhatsApp Manager** (Business → WhatsApp Manager →
+   Phone numbers → Add), verificado por SMS.
+2. Scopes `whatsapp_business_messaging` + `whatsapp_business_management` en la
+   app, liberados y aprobados en la tienda.
+3. `META_WABA_ID` y `META_PHONE_NUMBER_ID` en Vercel.
+4. Webhook en `https://envia-webhook.vercel.app/webhook/meta` con el mismo
+   verify token, suscrito al evento `messages`.
+
+### Ventana de 24 horas
+
+Meta solo permite responder con texto libre dentro de las 24 h desde el
+último mensaje del cliente. Como el bot siempre **responde**, está dentro de
+la ventana. Para mensajes proactivos (sin que el cliente escriba antes) hace
+falta una plantilla aprobada.
+
 ## Errores frecuentes
 
 | Error | Causa | Solución |

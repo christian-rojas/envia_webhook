@@ -561,6 +561,16 @@ app.get("/health", (req, res) => {
       configurado: Boolean(process.env.XAI_API_KEY),
       modelo: process.env.XAI_MODEL || "grok-4.7",
     },
+    whatsapp: {
+      // Configurado = hay credenciales. Para que funcione de verdad el
+      // numero debe estar registrado en WhatsApp Business y la app
+      // suscrita a los webhooks del WABA.
+      configurado: Boolean(
+        process.env.META_ACCESS_TOKEN && process.env.META_PHONE_NUMBER_ID
+      ),
+      waba_id: process.env.META_WABA_ID || null,
+      phone_number_id: process.env.META_PHONE_NUMBER_ID || null,
+    },
     envios: {
       supabase: Boolean(process.env.SUPABASE_URL),
       envia: Boolean(process.env.ENVIA_API_KEY),
@@ -669,9 +679,10 @@ app.get("/webhook/meta", (req, res) => {
 
 /**
  * POST /webhook/meta
- * Llega un mensaje entrante. Meta exige respuesta rapida (reintenta si
- * tarda), asi que se responde 200 de inmediato y el trabajo real se hace
- * despues, sin await.
+ * Llega un mensaje entrante de WhatsApp. Meta exige respuesta rapida
+ * (reintenta si tarda), asi que se responde 200 de inmediato y el trabajo
+ * real se hace despues, con waitUntil (en Vercel las promesas sueltas se
+ * hibernan y nunca se resuelven).
  */
 app.post("/webhook/meta", (req, res) => {
   const signature = req.headers["x-hub-signature-256"];
@@ -684,14 +695,29 @@ app.post("/webhook/meta", (req, res) => {
   const messages = meta.parseInboundMessages(req.body);
   console.log(`[meta] ${messages.length} mensaje(s) entrante(s)`);
 
-  // Se responde ya para que Meta no reintente. El procesamiento sigue.
-  res.status(200).send("EVENT_RECEIVED");
+  const waitUntil = req.waitUntil ? req.waitUntil.bind(req) : null;
 
-  for (const message of messages) {
-    handleInboundMessage(message).catch((error) => {
-      console.error("[meta] error procesando mensaje:", error.message);
-    });
+  const task = Promise.all(
+    messages.map((message) => {
+      // El phone_number_id viene en el webhook. Se usa para responder por el
+      // mismo numero por el que escribio el cliente (importante si hay mas
+      // de un numero en la cuenta).
+      const sender = (to, body) =>
+        meta.sendTextMessage(to, body, { phoneNumberId: message.phoneNumberId });
+
+      return handleInboundMessage(message, sender).catch((error) => {
+        console.error("[meta] error procesando mensaje:", error.message);
+      });
+    })
+  );
+
+  if (waitUntil) {
+    waitUntil(task);
+  } else {
+    task.catch((error) => console.error("[meta] error:", error.message));
   }
+
+  res.status(200).send("EVENT_RECEIVED");
 });
 
 /**
@@ -715,47 +741,25 @@ async function handleInboundMessage(message, sender = meta.sendTextMessage) {
     return;
   }
 
-  // 2) Resolver pedido: por numero de pedido en el texto o por telefono.
-  //    En WhatsApp el `from` YA es el telefono del cliente: es la identidad
-  //    del canal, no un dato que se le pida. Por eso no hace falta pedirle
-  //    nada para saber de quien se trata.
-  const { shipment, orderId, reason, matches } = await orders.findShipment({
-    phone: from,
-    text,
-  });
-
+  // 2) Resolver pedido: por numero de pedido en el texto, por lo que dijo
+  //    antes, o por su telefono (que en WhatsApp ya viene en el `from`).
+  const resolved = await resolveWhatsAppOrder(message);
   console.log(
-    `[meta] busqueda: reason=${reason} orderId=${orderId || "n/d"} ` +
-      `matches=${matches || 0}`
+    `[meta] busqueda: reason=${resolved.reason} ` +
+      `orderId=${resolved.orderId || "n/d"} ` +
+      `candidatos=${resolved.candidates ? resolved.candidates.length : 0}`
   );
 
-  // Se recuerda el pedido para que los mensajes siguientes no repitan.
-  if (orderId) conversation.remember(from, { orderId });
-
   // 3) Armar contexto para la IA.
-  let context;
-  if (shipment) {
-    context = ai.buildShipmentContext(shipment);
-    if (matches > 1) {
-      context +=
-        `\n\nNOTA: este cliente tiene ${matches} envios. Estas respondiendo ` +
-        `por el MAS RECIENTE (${orderId}). Menciona que tiene otros pedidos ` +
-        `y pide que confirme si es ese.`;
-    }
-  } else if (reason === "pedido_sin_envio") {
-    context =
-      `El pedido ${orderId} existe pero todavia NO tiene un envio generado ` +
-      `(todavia no se ha enviado). Pregunta si ya le informamos el numero de ` +
-      `seguimiento y ofrece pasar con un asesor.`;
-  } else {
-    context = ai.buildMissingDataContext({
-      reason,
-      orderId,
-    });
-  }
+  const context = await buildReplyContext(resolved, {
+    text,
+    greeting: ai.isGreetingOnly(text),
+    candidates: resolved.candidates || [],
+  });
 
   // 4) Respuesta de la IA.
   const { ok, reply, error } = await ai.generateReply({ userText: text, context });
+  console.log(`[meta] IA ok=${ok}${error ? " error=" + error : ""}`);
 
   if (!ok) {
     console.error("[meta] error de IA:", error);
@@ -767,8 +771,12 @@ async function handleInboundMessage(message, sender = meta.sendTextMessage) {
     return;
   }
 
-  await sender(from, reply);
-  console.log(`[meta] respuesta enviada a ${from}: ${reply}`);
+  const sent = await sender(from, reply);
+  if (sent && sent.ok === false) {
+    console.error("[meta] error enviando:", sent.error);
+  } else {
+    console.log(`[meta] respuesta enviada a ${from}: ${reply}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -868,6 +876,39 @@ app.post("/webhook/instagram", async (req, res) => {
 });
 
 /**
+ * Resuelve un pedido a partir de su numero (MON3007).
+ *
+ * @param {string} orderId Numero de pedido.
+ * @returns {Promise<object>} { shipment, orderId, reason, shopify }
+ */
+async function resolveOrderById(orderId) {
+  const shipment = await orders.findShipmentByOrderId(orderId);
+  if (shipment) {
+    return {
+      shipment,
+      orderId: shipment.orderId || orderId,
+      reason: "pedido",
+    };
+  }
+
+  // Sin envio en Envia: el pedido puede existir y estar en fabricacion.
+  const ctx = await shopify.getOrderContext(orderId).catch((error) => {
+    console.error(`[shopify] error leyendo ${orderId}:`, error.message);
+    return null;
+  });
+
+  if (ctx && ctx.found) {
+    return { shipment: null, orderId, reason: "pedido_sin_envio", shopify: ctx };
+  }
+
+  if (await orderExistsInSupabase(orderId)) {
+    return { shipment: null, orderId, reason: "pedido_sin_envio" };
+  }
+
+  return { shipment: null, orderId, reason: "pedido_no_encontrado" };
+}
+
+/**
  * Resuelve el pedido de un cliente de Instagram, en cascada:
  *
  *   1) Numero de pedido explicito en el texto  (MON3007 / "pedido 3007")
@@ -879,7 +920,7 @@ app.post("/webhook/instagram", async (req, res) => {
  * complica la conversacion.
  *
  * @param {object} message Mensaje normalizado.
- * @returns {Promise<object>} { shipment, orderId, reason }
+ * @returns {Promise<object>} { shipment, orderId, reason, shopify }
  */
 async function resolveInstagramOrder(message) {
   const text = message.text;
@@ -888,68 +929,154 @@ async function resolveInstagramOrder(message) {
   // 1) Numero de pedido explicito
   const orderId = orders.extractOrderId(text);
   if (orderId) {
-    const shipment = await orders.findShipmentByOrderId(orderId);
-    if (shipment) {
-      conversation.remember(key, { orderId: shipment.orderId || orderId });
-      return {
-        shipment,
-        orderId: shipment.orderId || orderId,
-        reason: "pedido",
-      };
+    const resolved = await resolveOrderById(orderId);
+    if (resolved.shipment || resolved.reason === "pedido_sin_envio") {
+      conversation.remember(key, { orderId: resolved.orderId });
     }
-
-    // Sin envio en Envia: el pedido puede existir y estar en fabricacion.
-    // Se consulta Shopify, que es la fuente de verdad del pedido.
-    const ctx = await shopify.getOrderContext(orderId).catch((error) => {
-      console.error(`[shopify] error leyendo ${orderId}:`, error.message);
-      return null;
-    });
-
-    if (ctx && ctx.found) {
-      conversation.remember(key, { orderId });
-      return {
-        shipment: null,
-        orderId,
-        reason: "pedido_sin_envio",
-        shopify: ctx,
-      };
-    }
-
-    // El pedido no esta en Shopify (o no se pudo leer). Se comprueba
-    // nuestra tabla de envios: si esta ahi, el pedido existe.
-    if (await orderExistsInSupabase(orderId)) {
-      conversation.remember(key, { orderId });
-      return { shipment: null, orderId, reason: "pedido_sin_envio" };
-    }
-
-    return { shipment: null, orderId, reason: "pedido_no_encontrado" };
+    return resolved;
   }
 
   // 2) Memoria de la conversacion
   const memo = conversation.get(key);
   if (memo?.orderId) {
-    const shipment = await orders.findShipmentByOrderId(memo.orderId);
-    if (shipment) {
-      return {
-        shipment,
-        orderId: memo.orderId,
-        reason: "memoria_pedido",
-      };
+    const resolved = await resolveOrderById(memo.orderId);
+    if (resolved.shipment || resolved.reason === "pedido_sin_envio") {
+      return { ...resolved, reason: resolved.reason === "pedido" ? "memoria_pedido" : resolved.reason };
     }
-    const ctx = await shopify.getOrderContext(memo.orderId).catch(() => null);
-    if (ctx && ctx.found) {
-      return {
-        shipment: null,
-        orderId: memo.orderId,
-        reason: "pedido_sin_envio",
-        shopify: ctx,
-      };
-    }
-    return { shipment: null, orderId: memo.orderId, reason: "pedido_sin_envio" };
   }
 
   // 3) Sin ningun dato
   return { shipment: null, reason: "sin_datos" };
+}
+
+/**
+ * Resuelve el pedido de un cliente de WhatsApp, en cascada:
+ *
+ *   1) Numero de pedido explicito en el texto
+ *   2) Lo que el cliente dijo antes en esta conversacion
+ *   3) Los pedidos del cliente, buscados por su telefono en Shopify
+ *   4) Nada -> se le pide el numero de pedido
+ *
+ * En WhatsApp el `from` del webhook YA es el telefono del cliente: es la
+ * identidad del canal, no un dato que se le recabe. Con eso se sabe de
+ * inmediato de que pedido esta hablando, sin preguntarle nada.
+ *
+ * @param {object} message Mensaje normalizado.
+ * @returns {Promise<object>} { shipment, orderId, reason, shopify, candidates }
+ */
+async function resolveWhatsAppOrder(message) {
+  const { from, text } = message;
+
+  // 1) Numero de pedido explicito
+  const orderId = orders.extractOrderId(text);
+  if (orderId) {
+    const resolved = await resolveOrderById(orderId);
+    if (resolved.shipment || resolved.reason === "pedido_sin_envio") {
+      conversation.remember(from, { orderId: resolved.orderId });
+    }
+    return resolved;
+  }
+
+  // 2) Memoria de la conversacion
+  const memo = conversation.get(from);
+  if (memo?.orderId) {
+    const resolved = await resolveOrderById(memo.orderId);
+    if (resolved.shipment || resolved.reason === "pedido_sin_envio") {
+      return {
+        ...resolved,
+        reason: resolved.reason === "pedido" ? "memoria_pedido" : resolved.reason,
+      };
+    }
+  }
+
+  // 3) Pedidos del cliente por telefono (Shopify)
+  let candidates = [];
+  try {
+    candidates = await shopify.findOrdersByPhone(from);
+  } catch (error) {
+    console.error("[shopify] error buscando por telefono:", error.message);
+  }
+
+  if (candidates.length) {
+    const principal = candidates[0];
+    const resolved = await resolveOrderById(principal.name);
+    conversation.remember(from, { orderId: resolved.orderId || principal.name });
+
+    if (resolved.shipment || resolved.reason === "pedido_sin_envio") {
+      return {
+        ...resolved,
+        reason: resolved.reason === "pedido" ? "telefono" : resolved.reason,
+        candidates: candidates.map((c) => c.name),
+      };
+    }
+    return { shipment: null, orderId: principal.name, reason: "pedido_no_encontrado", candidates: candidates.map((c) => c.name) };
+  }
+
+  // 4) Sin ningun dato
+  return { shipment: null, reason: "sin_datos" };
+}
+
+/**
+ * Arma el contexto para la IA a partir de la resolucion del pedido.
+ *
+ * Es el mismo para Instagram y WhatsApp: estado del envio, proceso de
+ * fabricacion y los datos que falten.
+ *
+ * @param {object} resolved Resultado de resolve*.
+ * @param {object} [options] { text, greeting, candidates }
+ * @returns {Promise<string>} Contexto.
+ */
+async function buildReplyContext(resolved, { text = "", greeting = false, candidates = [] } = {}) {
+  let context;
+
+  if (resolved.shipment) {
+    context = ai.buildShipmentContext(resolved.shipment);
+
+    // Si el pedido se identifico por el telefono del cliente (no lo pidio
+    // explicitamente), hay que responder sobre ESE pedido: el bot ya sabe
+    // de que se trata y no debe preguntar de que pedido habla.
+    if (resolved.reason === "telefono" || resolved.reason === "memoria_pedido") {
+      context +=
+        `\n\nYa identificamos el pedido del cliente por su numero de ` +
+        `telefono: ${resolved.orderId}. Aunque no haya escrito un numero de ` +
+        `pedido en su mensaje, responde sobre ESE pedido. No le preguntes de ` +
+        `que pedido trata.`;
+    }
+
+    // Si el cliente tiene varios pedidos, se le avisa de cual se responde.
+    if (candidates.length > 1) {
+      context +=
+        `\n\nNOTA: este cliente tiene ${candidates.length} pedidos ` +
+        `(${candidates.join(", ")}). Estas respondiendo por el MAS RECIENTE ` +
+        `(${resolved.orderId}). Menciona que tiene otros pedidos y pide que ` +
+        `confirme si es ese.`;
+    }
+  } else if (resolved.reason === "pedido_sin_envio") {
+    context =
+      `El pedido ${resolved.orderId} EXISTE, pero todavia NO tiene un envio ` +
+      `generado: sigue en proceso en el taller. No le digas que no lo ` +
+      `encontramos. Pregunta si ya le informamos el numero de seguimiento y ` +
+      `ofrece pasar con un asesor si es urgente.`;
+  } else {
+    context = ai.buildMissingDataContext({
+      reason: resolved.reason,
+      orderId: resolved.orderId,
+      greeting,
+    });
+  }
+
+  // Proceso de fabricacion: se cuenta mientras el paquete no fue retirado.
+  const process = await getManufacturingNotes(resolved);
+  const mostrarProceso =
+    resolved.orderId &&
+    resolved.reason !== "pedido_no_encontrado" &&
+    orders.isNotPickedUp(resolved.shipment);
+
+  if (mostrarProceso) {
+    context += "\n\n" + ai.buildProcessContext(process.notes, process);
+  }
+
+  return context;
 }
 
 /**
@@ -981,34 +1108,10 @@ async function handleInstagramMessage(message, sender) {
       `orderId=${resolved.orderId || "n/d"}`
   );
 
-  // Armar contexto para la IA.
-  let context;
-  if (resolved.shipment) {
-    context = ai.buildShipmentContext(resolved.shipment);
-  } else if (resolved.reason === "pedido_sin_envio") {
-    context =
-      `El pedido ${resolved.orderId} EXISTE, pero todavia NO tiene un envio ` +
-      `generado: sigue en proceso en el taller. No le digas que no lo ` +
-      `encontramos. Pregunta si ya le informamos el numero de seguimiento y ` +
-      `ofrece pasar con un asesor si es urgente.`;
-  } else {
-    context = ai.buildMissingDataContext({
-      reason: resolved.reason,
-      orderId: resolved.orderId,
-      greeting: ai.isGreetingOnly(text),
-    });
-  }
-
-  // Proceso de fabricacion: se cuenta mientras el paquete no fue retirado.
-  const process = await getManufacturingNotes(resolved);
-  const mostrarProceso =
-    resolved.orderId &&
-    resolved.reason !== "pedido_no_encontrado" &&
-    orders.isNotPickedUp(resolved.shipment);
-
-  if (mostrarProceso) {
-    context += "\n\n" + ai.buildProcessContext(process.notes, process);
-  }
+  const context = await buildReplyContext(resolved, {
+    text,
+    greeting: ai.isGreetingOnly(text),
+  });
 
   const { ok, reply, error } = await ai.generateReply({ userText: text, context });
   console.log(`[instagram] IA ok=${ok}${error ? " error=" + error : ""}`);
@@ -1033,6 +1136,10 @@ module.exports = app;
 module.exports.handleInstagramMessage = handleInstagramMessage;
 module.exports.handleInboundMessage = handleInboundMessage;
 module.exports.resolveInstagramOrder = resolveInstagramOrder;
+module.exports.resolveWhatsAppOrder = resolveWhatsAppOrder;
+module.exports.buildReplyContext = buildReplyContext;
 module.exports.filterRelevantNotes = filterRelevantNotes;
 module.exports.isRelevantNote = isRelevantNote;
 module.exports.looksLikeManufacturing = looksLikeManufacturing;
+// La construccion del indice de telefonos puede tardar ~7s la primera vez.
+module.exports.config = { maxDuration: 60 };

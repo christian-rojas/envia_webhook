@@ -413,14 +413,180 @@ async function getGrantedScopes() {
   return data?.data?.currentAppInstallation?.accessScopes || [];
 }
 
+/**
+ * Normaliza un telefono a un formato comparable.
+ *
+ * Chile: 9 digitos moviles (9XXXX XXXX), 8 digitos fijos, con o sin 56.
+ *
+ * @param {string} phone Telefono.
+ * @returns {string|null}
+ */
+function normalizePhone(phone) {
+  if (!phone) return null;
+  let digits = String(phone).replace(/\D/g, "");
+  if (!digits) return null;
+  if (digits.length === 11 && digits.startsWith("56")) return digits;
+  if (digits.length === 11) return digits;
+  if (digits.length === 9 && digits.startsWith("9")) return `56${digits}`;
+  if (digits.length === 8) return `56${digits}`;
+  return digits;
+}
+
+/**
+ * Indica si dos telefonos son el mismo numero.
+ *
+ * @param {string} a
+ * @param {string} b
+ * @returns {boolean}
+ */
+function phonesMatch(a, b) {
+  const na = normalizePhone(a);
+  const nb = normalizePhone(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  // El "9" extra no debe impedir el match.
+  if (na.slice(-8) === nb.slice(-8)) return true;
+  const strip = (s) => (s.startsWith("569") ? "56" + s.slice(3) : s);
+  return strip(na) === strip(nb);
+}
+
+// ---------------------------------------------------------------------------
+// Indice telefono -> pedidos
+// ---------------------------------------------------------------------------
+// El telefono del cliente NO esta en Envia (alla va un telefono de fabrica)
+// ni en Supabase. La unica fuente real es `shipping_address.phone` de
+// Shopify. Y la busqueda por `phone:` de GraphQL no filtra, asi que hay que
+// indexar los pedidos por telefono.
+//
+// El indice se guarda en memoria con TTL y se refresca en segundo plano.
+
+let phoneIndex = null; // Map<telefono, [{name, createdAt, note}]>
+let phoneIndexBuiltAt = 0;
+let phoneIndexBuilding = false;
+
+const PHONE_INDEX_TTL_MS = Number(
+  process.env.SHOPIFY_PHONE_INDEX_TTL_MS || 30 * 60 * 1000
+);
+
+/**
+ * Construye el indice telefono -> pedidos recorriendo todo el historico.
+ *
+ * @returns {Promise<Map<string, object[]>>}
+ */
+async function buildPhoneIndex() {
+  const index = new Map();
+  let after = null;
+  let pages = 0;
+
+  const query = `query ($after: String) {
+    orders(first: 250, after: $after, sortKey: CREATED_AT, reverse: true) {
+      edges {
+        node {
+          name
+          createdAt
+          shippingAddress { phone }
+        }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }`;
+
+  while (pages < 30) {
+    const data = await graphql(query, { after });
+    const edges = data.orders?.edges || [];
+    if (!edges.length) break;
+    pages++;
+
+    for (const edge of edges) {
+      const node = edge.node;
+      const phone = normalizePhone(node.shippingAddress?.phone);
+      if (!phone) continue;
+      if (!index.has(phone)) index.set(phone, []);
+      index.get(phone).push({
+        name: node.name,
+        createdAt: node.createdAt,
+      });
+    }
+
+    if (!data.orders.pageInfo.hasNextPage) break;
+    after = data.orders.pageInfo.endCursor;
+  }
+
+  phoneIndex = index;
+  phoneIndexBuiltAt = Date.now();
+  phoneIndexBuilding = false;
+  console.log(
+    `[shopify] indice de telefonos: ${index.size} telefonos, ${pages} paginas`
+  );
+  return index;
+}
+
+/**
+ * Devuelve el indice de telefonos, construyolo si hace falta.
+ *
+ * @param {object} [options] { maxWait } ms maximos de espera.
+ * @returns {Promise<Map<string, object[]>|null>}
+ */
+async function getPhoneIndex({ maxWait = 20000 } = {}) {
+  const fresh =
+    phoneIndex && Date.now() - phoneIndexBuiltAt < PHONE_INDEX_TTL_MS;
+  if (fresh) return phoneIndex;
+
+  if (phoneIndexBuilding) {
+    // Ya se esta construyendo: se espera un poco por el resultado.
+    const deadline = Date.now() + maxWait;
+    while (phoneIndexBuilding && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    return phoneIndex;
+  }
+
+  phoneIndexBuilding = true;
+  try {
+    return await buildPhoneIndex();
+  } catch (error) {
+    phoneIndexBuilding = false;
+    console.error("[shopify] error construyendo el indice:", error.message);
+    return phoneIndex;
+  }
+}
+
+/**
+ * Busca los pedidos de un cliente por su telefono.
+ *
+ * @param {string} phone Telefono del cliente.
+ * @param {object} [options] { maxWait } espera maxima por el indice.
+ * @returns {Promise<object[]>} Pedidos del cliente, del mas nuevo al mas viejo.
+ */
+async function findOrdersByPhone(phone, { maxWait = 20000 } = {}) {
+  const target = normalizePhone(phone);
+  if (!target) return [];
+
+  const index = await getPhoneIndex({ maxWait });
+  if (!index) return [];
+
+  // Se comparan con phonesMatch por si el formato guardado difiere.
+  for (const [key, pedidos] of index.entries()) {
+    if (key === target || phonesMatch(key, target)) {
+      return pedidos.slice().sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+    }
+  }
+  return [];
+}
+
 module.exports = {
   SHOPIFY_SHOP,
   API_VERSION,
   getAccessToken,
   shopifyFetch,
+  graphql,
   normalizeOrderName,
+  normalizePhone,
+  phonesMatch,
   getOrder,
   getOrderContext,
   getGrantedScopes,
-  graphql,
+  buildPhoneIndex,
+  getPhoneIndex,
+  findOrdersByPhone,
 };
