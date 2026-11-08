@@ -111,6 +111,43 @@ async function main() {
 
   // 3) Suscribir la app a los eventos del WABA
   console.log("\n3) Suscribiendo la app a los webhooks del WABA...");
+
+  // Atajos para la verificacion del numero por codigo.
+  const argv = process.argv;
+  const requestCode = argv.includes("--request-code");
+  const verifyIdx = argv.indexOf("--verify-code");
+  const verifyCode = verifyIdx !== -1 ? argv[verifyIdx + 1] : null;
+
+  if (requestCode || verifyCode) {
+    const target = phoneNumberId;
+    if (!target) {
+      console.log(bad("falta el phone_number_id para el flujo de verificacion"));
+      return;
+    }
+    if (requestCode) {
+      const res = await graph(`${target}/request_code`, {
+        method: "POST",
+        params: { code_method: "SMS", language: "es" },
+      });
+      console.log(
+        res.body?.success
+          ? ok("codigo solicitado: Meta envio un SMS al numero")
+          : bad(res.body?.error?.message || JSON.stringify(res.body))
+      );
+      return;
+    }
+    const res = await graph(`${target}/verify_code`, {
+      method: "POST",
+      params: { code: verifyCode },
+    });
+    console.log(
+      res.body?.success
+        ? ok("numero verificado")
+        : bad(res.body?.error?.message || JSON.stringify(res.body))
+    );
+    return;
+  }
+
   const sub = await graph(`${wabaId}/subscribed_apps`, {
     method: "POST",
     params: { subscribed_fields: SUBSCRIBED_FIELDS.join(",") },
@@ -140,6 +177,31 @@ async function main() {
       `   POST /${wabaId}/subscribed_apps?override_callback_uri=${encodeURIComponent(WEBHOOK_URL)}` +
       `&verify_token=<token>`
   );
+  // 5) Verificacion del numero (si no esta verificado)
+  console.log("\n5) Verificacion del numero...");
+  const phones2 = await graph(`${wabaId}/phone_numbers`, {
+    params: { fields: "id,display_phone_number,code_verification_status,status" },
+  });
+  const pendiente = (phones2.body?.data || []).find(
+    (p) => p.code_verification_status !== "VERIFIED"
+  );
+
+  if (!pendiente) {
+    console.log(ok("todos los numeros estan verificados"));
+  } else {
+    console.log(
+      warn(
+        `${pendiente.display_phone_number} (${pendiente.id}) sin verificar ` +
+          `(${pendiente.code_verification_status}, ${pendiente.status})`
+      )
+    );
+    console.log(
+      "   Para pedir el codigo por SMS:\n" +
+        `     node scripts/setup_whatsapp.js ${wabaId} ${pendiente.id} --request-code\n` +
+        "   Meta manda un SMS al numero; despues:\n" +
+        `     node scripts/setup_whatsapp.js ${wabaId} ${pendiente.id} --verify-code <CODIGO>`
+    );
+  }
 }
 
 main().catch((error) => {
