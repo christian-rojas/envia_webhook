@@ -1335,7 +1335,19 @@ async function handleInstagramMessage(message, sender) {
   const { text } = message;
   console.log(`[instagram] mensaje: ${text}`);
 
-  if (ai.wantsHuman(text)) {
+  // ALCANCE: el bot solo habla si la persona pregunta por un pedido.
+  // Un saludo, un "ok", un emoji o cualquier comentario que no sea del
+  // pedido se queda sin respuesta.
+  const mencionaPedido =
+    Boolean(orders.extractOrderId(text)) || ai.isTrackingIntent(text);
+  const pideHumano = ai.wantsHuman(text);
+
+  if (!mencionaPedido && !pideHumano) {
+    console.log("[instagram] sin respuesta: no pregunta por un pedido");
+    return;
+  }
+
+  if (pideHumano) {
     await sender(
       message.customerId,
       "Te paso con un asesor de Mondano que te va a ayudar. " +

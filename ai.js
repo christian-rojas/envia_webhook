@@ -47,19 +47,37 @@ function wantsHuman(text) {
 }
 
 /**
+ * Normaliza texto para compararlo: minusculas y sin acentos.
+ *
+ * Asi los patrones no tienen que duplicar cada palabra con y sin tilde.
+ *
+ * @param {string} text Texto.
+ * @returns {string}
+ */
+function normalizeText(text) {
+  return String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+/**
  * Palabras que indican que el cliente pregunta por un pedido o su envio.
- * Se usan para distinguir "hola" de "que paso con mi pedido?".
+ * Se comparan sobre el texto normalizado (sin acentos, en minusculas).
  */
 const TRACKING_INTENT_PATTERNS = [
-  /\bmi (pedido|orden|compra|envio|entrega)\b/i,
-  /\b(pedido|orden|compra|envio|entrega)\b/i,
-  /\b(donde|cuando|que)\s+(esta|llega|llegara|llego|llegó|pasó)\b/i,
-  /\b(llego|llegó|recibí|recibio|me llego)\b/i,
-  /\bseguimiento\b/i,
-  /\btracking\b/i,
-  /\bnumero de (pedido|seguimiento)\b/i,
-  /\bestado\b/i,
-  /\b(aun no|todavia no) me (llega|llegó)\b/i,
+  /\bmi (pedido|orden|compra|envio|entrega|paquete)\b/,
+  /\b(pedido|orden|compra)\b/,
+  /\b(mi|del|de mi|de el|ultimo|ultima) (envio|entrega|paquete)\b/,
+  /\b(donde|cuando|que) (me )?(esta|llega|llegara|llego|llegue|pasó)\b/,
+  /\b(donde|cuando|que)\b[^.?!]{0,20}\b(llega|llego|envian|llegue)\b/,
+  /\bya (esta|llego|recibí|recibio)\b/,
+  /\bque paso con mi\b/,
+  /\b(llego|recibí|recibio|me llego)\b/,
+  /\b(seguimiento|tracking|rastreo)\b/,
+  /\bnumero de (pedido|seguimiento)\b/,
+  /\bestado\b/,
+  /\b(aun no|todavia no) me (llega|llego)\b/,
 ];
 
 /**
@@ -77,7 +95,8 @@ const GREETING_ONLY_PATTERNS = [
  */
 function isTrackingIntent(text) {
   if (!text) return false;
-  return TRACKING_INTENT_PATTERNS.some((re) => re.test(text));
+  const t = normalizeText(text);
+  return TRACKING_INTENT_PATTERNS.some((re) => re.test(t));
 }
 
 /**
