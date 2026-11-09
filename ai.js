@@ -18,7 +18,7 @@ const XAI_BASE_URL = process.env.XAI_BASE_URL || "https://api.x.ai/v1";
 const XAI_MODEL = process.env.XAI_MODEL || "grok-4.20-non-reasoning";
 
 /**
- * Palabras que indican que el cliente quiere hablar con una persona.
+ * Palabras que indican que el cliente pide intervencion humana.
  * El regex es deliberadamente amplio: ante la duda, escalar es mejor que
  * responder mal.
  */
@@ -65,22 +65,79 @@ function normalizeText(text) {
 }
 
 /**
- * Palabras que indican que el cliente pregunta por un pedido o su envio.
- * Se comparan sobre el texto normalizado (sin acentos, en minusculas).
+ * Palabras que indican que el cliente YA RECIBIO el pedido.
+ *
+ * OJO: estos patrones se comparan contra el texto NORMALIZADO (minusculas y
+ * sin acentos), asi que van sin tilde: "recibí" -> "recibi", "llegó" -> "llego".
+ *
+ * Cuando el cliente dice que ya llego, el bot NO debe seguir preguntando el
+ * numero de pedido: el cliente ya dijo que lo recibio, pedirle el numero
+ * es absurdo. Se detecta aparte para no confundirse con "aun no me llega".
+ */
+const ALREADY_ARRIVED_PATTERNS = [
+  /\b(recien |ya )(me |lo |la |les )?(llego|esta aqui|lo tengo|tengo el|tengo la|recibi|esta en mi casa|esta en casa)\b/,
+  /\b(me |lo |la |nos )?llego (bien|todo|el pedido|la prenda|el paquete|el producto|la ropa|la caja|tarde|rapido|ayer|hoy)\b/,
+  /\bme llego\b/,
+  /\blo (recibi|tengo)\b/,
+  /\brecibi (el |la |mi |todo|toda)\b/,
+  /\bya lo (tengo|recibi)\b/,
+  /\bme lo trajeron\b/,
+  /\bya esta en (mi |la )?(casa|domicilio)\b/,
+  /\bentregado\b/,
+];
+
+/**
+ * Señales de que el pedido AUN NO llego. Si aparece alguna, el cliente NO
+ * esta diciendo que ya lo recibio (esta preguntando, no afirmando).
+ */
+const NOT_YET_ARRIVED_PATTERNS = [
+  /\b(aun|todavia)\b/,
+  /\bno (me |ha |he |nos )*(llegado|llegue|llega|recibido|recibi|tenido|traido)\b/,
+  /\bno (esta|estan) entregad/,
+  /\bfalta\b/,
+  /\bno ha llegado\b/,
+  /\bsigue (sin llegar|en camino)\b/,
+  // "cuando ya llegue me avisas" es futuro, no "ya llego".
+  /\bcuando\b[^.?!]{0,25}\bllegue\b/,
+  /\bsi (ya )?llega\b/,
+  /\bcuando me (lo )?envien\b/,
+];
+
+/**
+ * Detecta si el cliente afirma que su pedido ya llego.
+ *
+ * @param {string} text Texto del cliente.
+ * @returns {boolean}
+ */
+function saysAlreadyArrived(text) {
+  if (!text) return false;
+  const t = normalizeText(text);
+  if (NOT_YET_ARRIVED_PATTERNS.some((re) => re.test(t))) return false;
+  return ALREADY_ARRIVED_PATTERNS.some((re) => re.test(t));
+}
+
+/**
+ * Palabras que indican que el cliente pregunta por el estado de un pedido.
+ *
+ * OJO: se comparan contra el texto NORMALIZADO (minusculas y sin acentos),
+ * asi que van sin tilde: "recibí" -> "recibi", "pasó" -> "paso".
  */
 const TRACKING_INTENT_PATTERNS = [
   /\bmi (pedido|orden|compra|envio|entrega|paquete)\b/,
   /\b(pedido|orden|compra)\b/,
   /\b(mi|del|de mi|de el|ultimo|ultima) (envio|entrega|paquete)\b/,
-  /\b(donde|cuando|que) (me )?(esta|llega|llegara|llego|llegue|pasó)\b/,
-  /\b(donde|cuando|que)\b[^.?!]{0,20}\b(llega|llego|envian|llegue)\b/,
-  /\bya (esta|llego|recibí|recibio)\b/,
+  /\b(donde|cuando|que|cuanto|cuantos) (me )?(esta|llega|llegara|llego|llegue|pasó)\b/,
+  /\b(donde|cuando|que|cuanto|cuantos)\b[^.?!]{0,25}\b(llega|llego|envian|llegue|llegamos|demora|plazo)\b/,
+  /\bya (esta|llego|recibi)\b/,
   /\bque paso con mi\b/,
-  /\b(llego|recibí|recibio|me llego)\b/,
+  /\b(llego|recibi|me llego)\b/,
   /\b(seguimiento|tracking|rastreo)\b/,
   /\bnumero de (pedido|seguimiento)\b/,
   /\bestado\b/,
   /\b(aun no|todavia no) me (llega|llego)\b/,
+  /\bno (me |ha |he |nos )*(llegado|llegue|llega|recibido|recibi)\b/,
+  /\bno he recibido\b/,
+  /\brecibi\b/,
 ];
 
 /**
@@ -180,6 +237,44 @@ function buildMissingDataContext({ reason, orderId, matches, channel, greeting }
 
   // El unico dato que se pide es el numero de pedido.
   lines.push(`Pide el numero de pedido (formato MON3007).`);
+
+  return lines.join("\n");
+}
+
+/**
+ * Contexto para cuando el cliente dice que su pedido YA LLEGO.
+ *
+ * Es el caso en el que el bot NO debe pedir el numero de pedido: el cliente
+ * ya dijo que lo recibio. Pedirselo ahi es absurdo y el cliente lo percibe
+ * como que el bot no lo escucho.
+ *
+ * @param {object} [params]
+ * @param {string} [params.orderId] Pedido que se pudo identificar (si hubo).
+ * @returns {string}
+ */
+function buildAlreadyArrivedContext({ orderId } = {}) {
+  const lines = [];
+
+  lines.push(
+    `El cliente dice que su pedido YA LLEGO (o que ya lo recibio).`
+  );
+  if (orderId) {
+    lines.push(`El pedido en referencia es el ${orderId}.`);
+  }
+
+  lines.push(
+    `NO le pidas el numero de pedido: el cliente ya dijo que lo recibio, ` +
+      `pedirselo es absurdo y parece que no lo escuchaste.`
+  );
+  lines.push(
+    `Responde en una o dos frases: alegra que haya llegado y pregunta en que ` +
+      `puedogles ayudar (cambio de talla o color, garantia, devolucion) o ` +
+      `ofrece pasar con un asesor si necesita algo.`
+  );
+  lines.push(
+    `NO le digas que su pedido sigue en camino ni le des el estado de un envio ` +
+      `que el cliente ya dio por recibido.`
+  );
 
   return lines.join("\n");
 }
@@ -380,8 +475,10 @@ module.exports = {
   wantsHuman,
   isTrackingIntent,
   isGreetingOnly,
+  saysAlreadyArrived,
   buildShipmentContext,
   buildProcessContext,
   buildMissingDataContext,
+  buildAlreadyArrivedContext,
   generateReply,
 };

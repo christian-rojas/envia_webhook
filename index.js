@@ -972,6 +972,20 @@ async function handleInboundMessage(message, sender = meta.sendTextMessage) {
     return;
   }
 
+  // 1b) ALCANCE: el bot solo habla si la persona pregunta por su pedido
+  //     (un numero de pedido o cuando le llega). Un saludo, un "ok" o
+  //     cualquier otra cosa se queda sin respuesta.
+  //     Excepcion: si en ESTA conversacion ya se esta hablando de un pedido
+  //     (memoria), se responde: es un seguimiento, no una pregunta nueva.
+  const mencionaPedido =
+    Boolean(orders.extractOrderId(text)) || ai.isTrackingIntent(text);
+  const yaHablamosDeUnPedido = Boolean(conversation.get(from)?.orderId);
+
+  if (!mencionaPedido && !yaHablamosDeUnPedido) {
+    console.log("[meta] sin respuesta: no pregunta por un pedido");
+    return;
+  }
+
   // 2) Resolver pedido: por numero de pedido en el texto, por lo que dijo
   //    antes, o por su telefono (que en WhatsApp ya viene en el `from`).
   mark("resolviendo pedido...");
@@ -996,12 +1010,9 @@ async function handleInboundMessage(message, sender = meta.sendTextMessage) {
   mark(`IA ok=${ok}${error ? " error=" + error : ""}`);
 
   if (!ok) {
-    console.error("[meta] error de IA:", error);
-    await sender(
-      from,
-      "Tuve problemas para responder en este momento. " +
-        "Por favor contacta a nuestro equipo al +56 9 9689 1362 o contacto@mondano.cl"
-    );
+    // No se avisa al cliente: un "tuve problemas para responder" confunde
+    // mas que Helpful de lo que ayuda. Se queda mudo y se loguea.
+    console.error("[meta] error de IA (no se responde al cliente):", error);
     return;
   }
 
@@ -1345,7 +1356,12 @@ async function resolveWhatsAppOrder(message) {
 async function buildReplyContext(resolved, { text = "", greeting = false, candidates = [] } = {}) {
   let context;
 
-  if (resolved.shipment) {
+  if (ai.saysAlreadyArrived(text)) {
+    // El cliente dijo que ya llego. Se responde ESO, no el estado del envio:
+    // de lo contrario se le dice "tu pedido va en camino" a alguien que ya lo
+    // tiene en la mano. Y en ningun caso se le pide el numero de pedido.
+    context = ai.buildAlreadyArrivedContext({ orderId: resolved.orderId });
+  } else if (resolved.shipment) {
     context = ai.buildShipmentContext(resolved.shipment);
 
     // Si el pedido se identifico por el telefono del cliente (no lo pidio
@@ -1446,12 +1462,10 @@ async function handleInstagramMessage(message, sender) {
   console.log(`[instagram] IA ok=${ok}${error ? " error=" + error : ""}`);
 
   if (!ok) {
-    console.error("[instagram] error de IA:", error);
-    await sender(
-      message.customerId,
-      "Tuve problemas para responder en este momento. " +
-        "Por favor contacta a nuestro equipo al +56 9 9689 1362 o contacto@mondano.cl"
-    );
+    // No se avisa al cliente: un "tuve problemas para responder" confunde
+    // mas que Helpful de lo que ayuda. Se queda mudo y se loguea para
+    // revisarlo desde los logs de Vercel.
+    console.error("[instagram] error de IA (no se responde al cliente):", error);
     return;
   }
 
