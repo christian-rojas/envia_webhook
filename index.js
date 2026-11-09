@@ -148,12 +148,8 @@ async function getManufacturingNotes(resolved) {
  * @returns {Promise<boolean>}
  */
 async function orderExistsInSupabase(orderId) {
-  const { data, error } = await supabase
-    .from("order_tracking")
-    .select("order_id")
-    .eq("order_id", orderId)
-    .limit(1);
-  return !error && Array.isArray(data) && data.length > 0;
+  const map = await orders.getTrackingMap();
+  return map.has(orderId);
 }
 dotenv.config();
 
@@ -171,6 +167,7 @@ process.on("uncaughtException", (err) => {
 const { injectSpeedInsights } = require("@vercel/speed-insights");
 injectSpeedInsights();
 const { inject } = require("@vercel/analytics");
+const { waitUntil: vercelWaitUntil } = require("@vercel/functions");
 inject();
 
 // Permitir todas las solicitudes (modo abierto)
@@ -539,6 +536,100 @@ app.post("/webhook/shopify", async (req, res) => {
 });
 
 /**
+ * GET /diag/wa?from=56966278263&text=...
+ * Ejecuta la resolucion de WhatsApp y devuelve el resultado y los tiempos
+ * en la propia respuesta (asi no se pierde nada si la funcion se corta).
+ */
+app.get("/diag/wa", async (req, res) => {
+  const from = req.query.from || "56966278263";
+  const text = req.query.text || "hola, en que va mi pedido MON4706?";
+  const pasos = [];
+  const t0 = Date.now();
+  const mark = (m) =>
+    pasos.push(`${((Date.now() - t0) / 1000).toFixed(1)}s ${m}`);
+
+  const mensaje = { from, text, phoneNumberId: "530005643535929" };
+
+  mark("inicio");
+  const orderId = orders.extractOrderId(text);
+  mark(`extractOrderId -> ${orderId}`);
+
+  const shipment = await withTimeout(
+    orders.findShipmentByOrderId(orderId),
+    12000,
+    "__timeout__"
+  );
+  mark(`findShipmentByOrderId -> ${shipment === "__timeout__" ? "TIMEOUT" : shipment ? shipment.status : "null"}`);
+
+  const ctx = await withTimeout(
+    shopify.getOrderContext(orderId),
+    12000,
+    "__timeout__"
+  );
+  mark(`getOrderContext -> ${ctx === "__timeout__" ? "TIMEOUT" : ctx ? ctx.found : "null"}`);
+
+  res.status(200).json({
+    pasos,
+    total_ms: Date.now() - t0,
+    shipment: shipment === "__timeout__" ? null : shipment,
+    shopify_found: ctx === "__timeout__" ? null : ctx?.found ?? null,
+  });
+});
+
+/**
+ * GET /diag/db
+ * Diagnostico de la conexion a Supabase: compara el cliente de supabase-js
+ * con un fetch crudo a la REST API. Sirve para distinguir un problema de
+ * red (Vercel -> Cloudflare) de uno del cliente.
+ */
+app.get("/diag/db", async (req, res) => {
+  const url = `${process.env.SUPABASE_URL}/rest/v1/order_tracking?select=order_id&limit=1`;
+  const key = process.env.SUPABASE_ANON_KEY;
+  const headers = { apikey: key, Authorization: `Bearer ${key}` };
+  const resultado = {};
+
+  // 1) fetch crudo
+  let t0 = Date.now();
+  try {
+    const r = await fetch(url, { headers, signal: AbortSignal.timeout(20000) });
+    resultado.fetch_crudo = { ms: Date.now() - t0, status: r.status };
+    await r.text();
+  } catch (error) {
+    resultado.fetch_crudo = { ms: Date.now() - t0, error: error.message };
+  }
+
+  // 2) supabase-js
+  t0 = Date.now();
+  try {
+    const { data, error } = await orders.supabase
+      .from("order_tracking")
+      .select("order_id")
+      .limit(1);
+    resultado.supabase_js = { ms: Date.now() - t0, ok: !error, filas: data?.length ?? 0 };
+  } catch (error) {
+    resultado.supabase_js = { ms: Date.now() - t0, error: error.message };
+  }
+
+  // 3) la consulta del mapa completo (la que usa el bot)
+  t0 = Date.now();
+  try {
+    const { data, error } = await orders.supabase
+      .from("order_tracking")
+      .select("order_id, tracking_id")
+      .limit(1000);
+    resultado.mapa_completo = {
+      ms: Date.now() - t0,
+      ok: !error,
+      filas: data?.length ?? 0,
+    };
+  } catch (error) {
+    resultado.mapa_completo = { ms: Date.now() - t0, error: error.message };
+  }
+
+  res.status(200).json(resultado);
+});
+
+/**
  * GET /health
  * Estado del bot sin exponer secretos. Sirve para verificar de un vistazo
  * si el webhook esta vivo, si las credenciales estan cargadas y cuando
@@ -588,7 +679,9 @@ app.get("/tracking/:order_id", async (req, res) => {
   console.log("order_id del tracking", order_id);
 
   try {
-    const { data, error } = await supabase.from("order_tracking").select("tracking_id").eq("order_id", order_id);
+    const { data, error } = await orders.dbQuery(() =>
+      supabase.from("order_tracking").select("tracking_id").eq("order_id", order_id)
+    );
     if (error) {
       console.error(error);
       res.status(500).send("No se encontró el número de seguimiento");
@@ -683,13 +776,117 @@ app.get("/webhook/meta", (req, res) => {
 });
 
 /**
+ * Detecta si un payload de Meta es de WhatsApp (y no de Instagram).
+ *
+ * Instagram manda `object: "instagram"` con `entry[].messaging`.
+ * WhatsApp manda `object: "whatsapp_business_account"` con
+ * `entry[].changes[].value.messaging_product == "whatsapp"`.
+ *
+ * @param {object} body Payload del webhook.
+ * @returns {boolean}
+ */
+function isWhatsAppPayload(body) {
+  if (!body) return false;
+  if (body.object === "whatsapp_business_account") return true;
+  const change = body.entry?.[0]?.changes?.[0]?.value;
+  if (change && change.messaging_product === "whatsapp") return true;
+  return false;
+}
+
+/**
+ * Procesa un webhook de Meta ya validado: responde 200 de inmediato y
+ * sigue trabajando en segundo plano con waitUntil.
+ *
+ * @param {object} req Request.
+ * @param {object} res Response.
+ * @param {string} canal "instagram" | "whatsapp"
+ */
+async function processMetaWebhook(req, res, canal) {
+  // Sin esto, Vercel CONGELA la funcion en cuanto se envia la respuesta y el
+  // trabajo pendiente nunca avanza. @vercel/functions expone waitUntil para
+  // registrarlo; req.waitUntil no existe en este runtime.
+  const waitUntil =
+    req.waitUntil || vercelWaitUntil || ((p) => p && p.catch(() => {}));
+
+  if (canal === "whatsapp") {
+    const messages = meta.parseInboundMessages(req.body);
+    console.log(`[meta] ${messages.length} mensaje(s) entrante(s)`);
+
+    const task = Promise.all(
+      messages.map((message) => {
+        // El phone_number_id viene en el webhook. Se usa para responder por el
+        // mismo numero por el que escribio el cliente.
+        const sender = (to, bodyText) =>
+          meta.sendTextMessage(to, bodyText, {
+            phoneNumberId: message.phoneNumberId,
+          });
+
+        return handleInboundMessage(message, sender).catch((error) => {
+          console.error("[meta] error procesando mensaje:", error.message);
+        });
+      })
+    );
+
+    // Se responde primero (Meta exige <5 s) y el trabajo sigue despues.
+    // waitUntil mantiene viva la funcion para que no se congele.
+    waitUntil(task);
+    res.status(200).send("EVENT_RECEIVED");
+    return;
+  }
+  // Instagram
+  const messages = meta.parseInstagramMessages(req.body);
+  console.log(`[instagram] ${messages.length} mensaje(s) entrante(s)`);
+
+  if (messages.length) {
+    lastInboundAt = new Date().toISOString();
+  } else {
+    // Meta puede enviar eventos que no son mensajes (comments, mentions,
+    // reactions, seen...). Se registra la forma del payload para poder
+    // depurarlos sin depender de los logs crudos de Vercel.
+    const entry = req.body?.entry?.[0] || {};
+    console.log(
+      "[instagram] evento sin mensajes:",
+      JSON.stringify({
+        object: req.body?.object,
+        entry_id: entry.id,
+        campos: Object.keys(entry),
+      })
+    );
+  }
+
+  const tasks = messages.map(async (message) => {
+    // El destinatario es el cliente (sender.id del webhook), no nuestra cuenta.
+    // Si se pasa un id explicito se respeta; si no, se usa el del mensaje.
+    const sender = (to, body) =>
+      meta.sendInstagramMessage(to || message.customerId, body, {
+        igUserId: message.igUserId,
+      });
+    try {
+      await handleInstagramMessage(message, sender);
+    } catch (error) {
+      console.error("[instagram] ERROR procesando mensaje:", error.message);
+      console.error("[instagram] stack:", (error.stack || "").split("\n").slice(0, 4).join(" | "));
+    }
+  });
+
+  const task = Promise.all(tasks);
+  if (waitUntil) {
+    waitUntil(task);
+  } else {
+    task.catch((error) => console.error("[instagram] error:", error.message));
+  }
+
+  res.status(200).send("EVENT_RECEIVED");
+}
+
+/**
  * POST /webhook/meta
  * Llega un mensaje entrante de WhatsApp. Meta exige respuesta rapida
  * (reintenta si tarda), asi que se responde 200 de inmediato y el trabajo
  * real se hace despues, con waitUntil (en Vercel las promesas sueltas se
  * hibernan y nunca se resuelven).
  */
-app.post("/webhook/meta", (req, res) => {
+app.post("/webhook/meta", async (req, res) => {
   const signature = req.headers["x-hub-signature-256"];
 
   if (!meta.verifyMetaSignature(req.rawBody, signature, META_APP_SECRET)) {
@@ -697,32 +894,7 @@ app.post("/webhook/meta", (req, res) => {
     return res.status(401).send("Invalid signature");
   }
 
-  const messages = meta.parseInboundMessages(req.body);
-  console.log(`[meta] ${messages.length} mensaje(s) entrante(s)`);
-
-  const waitUntil = req.waitUntil ? req.waitUntil.bind(req) : null;
-
-  const task = Promise.all(
-    messages.map((message) => {
-      // El phone_number_id viene en el webhook. Se usa para responder por el
-      // mismo numero por el que escribio el cliente (importante si hay mas
-      // de un numero en la cuenta).
-      const sender = (to, body) =>
-        meta.sendTextMessage(to, body, { phoneNumberId: message.phoneNumberId });
-
-      return handleInboundMessage(message, sender).catch((error) => {
-        console.error("[meta] error procesando mensaje:", error.message);
-      });
-    })
-  );
-
-  if (waitUntil) {
-    waitUntil(task);
-  } else {
-    task.catch((error) => console.error("[meta] error:", error.message));
-  }
-
-  res.status(200).send("EVENT_RECEIVED");
+  await processMetaWebhook(req, res, "whatsapp");
 });
 
 /**
@@ -733,6 +905,9 @@ app.post("/webhook/meta", (req, res) => {
  */
 async function handleInboundMessage(message, sender = meta.sendTextMessage) {
   const { from, text } = message;
+  const t0 = Date.now();
+  const mark = (m) =>
+    console.log(`[meta] (${((Date.now() - t0) / 1000).toFixed(1)}s) ${m}`);
   console.log(`[meta] mensaje de ${from}: ${text}`);
 
   // 1) Si pide hablar con una persona, se escala sin preguntar nada.
@@ -748,23 +923,26 @@ async function handleInboundMessage(message, sender = meta.sendTextMessage) {
 
   // 2) Resolver pedido: por numero de pedido en el texto, por lo que dijo
   //    antes, o por su telefono (que en WhatsApp ya viene en el `from`).
+  mark("resolviendo pedido...");
   const resolved = await resolveWhatsAppOrder(message);
-  console.log(
-    `[meta] busqueda: reason=${resolved.reason} ` +
-      `orderId=${resolved.orderId || "n/d"} ` +
+  mark(
+    `resuelto: reason=${resolved.reason} orderId=${resolved.orderId || "n/d"} ` +
       `candidatos=${resolved.candidates ? resolved.candidates.length : 0}`
   );
 
   // 3) Armar contexto para la IA.
+  mark("armando contexto...");
   const context = await buildReplyContext(resolved, {
     text,
     greeting: ai.isGreetingOnly(text),
     candidates: resolved.candidates || [],
   });
+  mark(`contexto listo (${context.length} chars)`);
 
   // 4) Respuesta de la IA.
+  mark("llamando a la IA...");
   const { ok, reply, error } = await ai.generateReply({ userText: text, context });
-  console.log(`[meta] IA ok=${ok}${error ? " error=" + error : ""}`);
+  mark(`IA ok=${ok}${error ? " error=" + error : ""}`);
 
   if (!ok) {
     console.error("[meta] error de IA:", error);
@@ -826,6 +1004,14 @@ app.post("/webhook/instagram", async (req, res) => {
     return res.status(401).send("Invalid signature");
   }
 
+  // Meta puede mandar el payload de WhatsApp a esta misma URL si la
+  // suscripcion de la app quedo apuntando aqui. Se detecta por la forma
+  // del payload y se enruta al handler que corresponde.
+  if (isWhatsAppPayload(req.body)) {
+    console.log("[instagram] payload de WhatsApp detectado -> /webhook/meta");
+    return processMetaWebhook(req, res, "whatsapp");
+  }
+
   const messages = meta.parseInstagramMessages(req.body);
   console.log(`[instagram] ${messages.length} mensaje(s) entrante(s)`);
   if (messages.length) {
@@ -849,12 +1035,12 @@ app.post("/webhook/instagram", async (req, res) => {
   // inmediato. En Vercel, las promesas que quedan pendientes despues de
   // res.send() se hibernate y nunca se resuelven: por eso se usa
   // waitUntil() de @vercel/functions, que mantiene viva la funcion.
-  const waitUntil = req.waitUntil ? req.waitUntil.bind(req) : null;
+  // waitUntil mantiene viva la funcion despues de responder. Sin el, Vercel
+  // congela la instancia y el trabajo pendiente nunca avanza.
+  const waitUntil =
+    req.waitUntil || vercelWaitUntil || ((p) => p && p.catch(() => {}));
 
   const tasks = messages.map(async (message) => {
-    // El "from" sirve para buscar pedidos por telefono (WhatsApp); en
-    // Instagram el id de usuario no es un telefono, asi que la respuesta
-    // va al Instagram Account ID.
     // El destinatario es el cliente (sender.id del webhook), no nuestra cuenta.
     // Si se pasa un id explicito se respeta; si no, se usa el del mensaje.
     const sender = (to, body) =>
@@ -886,31 +1072,82 @@ app.post("/webhook/instagram", async (req, res) => {
  * @param {string} orderId Numero de pedido.
  * @returns {Promise<object>} { shipment, orderId, reason, shopify }
  */
+/**
+ * Corre una promesa con un tope de tiempo. Si se pasa, se resuelve con el
+ * valor de respaldo y la promesa original se queda pendiente.
+ *
+ * Es una red de seguridad: desde Vercel hay llamadas que se quedan
+ * colgadas (Supabase, Envia, x.ai) y una funcion que no termina la mata
+ * Vercel a los 60 s, y con ella se pierden hasta los logs.
+ *
+ * @param {Promise} promise Promesa original.
+ * @param {number} ms Tope de espera.
+ * @param {*} fallback Valor si se pasa el tiempo.
+ * @returns {Promise<*>}
+ */
+function withTimeout(promise, ms, fallback) {
+  return Promise.race([
+    promise,
+    new Promise((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
 async function resolveOrderById(orderId) {
-  const shipment = await orders.findShipmentByOrderId(orderId);
-  if (shipment) {
-    return {
-      shipment,
-      orderId: shipment.orderId || orderId,
-      reason: "pedido",
-    };
+  const t0 = Date.now();
+  const mark = (m) =>
+    console.log(
+      `[orden] (${((Date.now() - t0) / 1000).toFixed(1)}s) ${orderId}: ${m}`
+    );
+
+  mark("consultando Supabase...");
+  const resultado = await withTimeout(
+    (async () => {
+      const shipment = await orders.findShipmentByOrderId(orderId);
+      mark(`envio: ${shipment ? shipment.status : "null"}`);
+      if (shipment) {
+        return { shipment, orderId: shipment.orderId || orderId, reason: "pedido" };
+      }
+
+      // Sin envio en Envia: el pedido puede existir y estar en fabricacion.
+      mark("consultando Shopify...");
+      const ctx = await shopify.getOrderContext(orderId).catch((error) => {
+        console.error(`[shopify] error leyendo ${orderId}:`, error.message);
+        return null;
+      });
+      mark(`shopify: found=${ctx ? ctx.found : "null"}`);
+
+      if (ctx && ctx.found) {
+        return {
+          shipment: null,
+          orderId,
+          reason: "pedido_sin_envio",
+          shopify: ctx,
+        };
+      }
+
+      mark("verificando en order_tracking...");
+      if (await orderExistsInSupabase(orderId)) {
+        mark("existe en order_tracking");
+        return { shipment: null, orderId, reason: "pedido_sin_envio" };
+      }
+
+      mark("no existe");
+      return { shipment: null, orderId, reason: "pedido_no_encontrado" };
+    })(),
+    15000,
+    null
+  );
+
+  if (!resultado) {
+    // Se paso el tiempo: preferimos responder algo honesto antes que dejar
+    // al cliente sin respuesta.
+    console.warn(
+      `[orden] ${orderId}: la busqueda paso de 15s, se responde sin verificar`
+    );
+    return { shipment: null, orderId, reason: "sin_verificar" };
   }
 
-  // Sin envio en Envia: el pedido puede existir y estar en fabricacion.
-  const ctx = await shopify.getOrderContext(orderId).catch((error) => {
-    console.error(`[shopify] error leyendo ${orderId}:`, error.message);
-    return null;
-  });
-
-  if (ctx && ctx.found) {
-    return { shipment: null, orderId, reason: "pedido_sin_envio", shopify: ctx };
-  }
-
-  if (await orderExistsInSupabase(orderId)) {
-    return { shipment: null, orderId, reason: "pedido_sin_envio" };
-  }
-
-  return { shipment: null, orderId, reason: "pedido_no_encontrado" };
+  return resultado;
 }
 
 /**
@@ -1071,14 +1308,15 @@ async function buildReplyContext(resolved, { text = "", greeting = false, candid
   }
 
   // Proceso de fabricacion: se cuenta mientras el paquete no fue retirado.
-  const process = await getManufacturingNotes(resolved);
+  // OJO: la variable NO se llama "process" porque sombrearia el global de Node.
+  const fabNotes = await getManufacturingNotes(resolved);
   const mostrarProceso =
     resolved.orderId &&
     resolved.reason !== "pedido_no_encontrado" &&
     orders.isNotPickedUp(resolved.shipment);
 
   if (mostrarProceso) {
-    context += "\n\n" + ai.buildProcessContext(process.notes, process);
+    context += "\n\n" + ai.buildProcessContext(fabNotes.notes, fabNotes);
   }
 
   return context;

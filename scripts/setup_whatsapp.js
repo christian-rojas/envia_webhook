@@ -67,6 +67,47 @@ async function main() {
 
   console.log("\n\x1b[1mSetup de WhatsApp Cloud API\x1b[0m");
 
+  // -) Verificar un token suelto: node scripts/setup_whatsapp.js --check-token <token>
+  const checkIdx = process.argv.indexOf("--check-token");
+  if (checkIdx !== -1) {
+    const cand = process.argv[checkIdx + 1] || process.env.META_ACCESS_TOKEN;
+    if (!cand) {
+      console.log(bad("falta el token a verificar"));
+      return;
+    }
+    const p = await graph("me/permissions", { token: cand });
+    const granted = (p.body?.data || []).map((x) => x.permission);
+    console.log("\nScopes del token:");
+    console.log("  " + (granted.join(", ") || "(ninguno)"));
+    for (const s of [
+      "whatsapp_business_messaging",
+      "whatsapp_business_management",
+      "business_management",
+    ]) {
+      console.log(
+        granted.includes(s) ? ok(s) : bad(`${s}  <- falta`)
+      );
+    }
+    const waba = await graph("554629607724135", {
+      token: cand,
+      params: {
+        fields: "id,name,phone_numbers{id,display_phone_number,verified_name,status,code_verification_status,quality_rating}",
+      },
+    });
+    if (waba.body?.error) {
+      console.log(bad("no puede leer la WABA: " + waba.body.error.message.slice(0, 120)));
+    } else {
+      console.log(ok(`WABA: ${waba.body.name} (${waba.body.id})`));
+      for (const ph of waba.body.phone_numbers?.data || []) {
+        console.log(
+          `     ${ph.display_phone_number}  id=${ph.id}  ${ph.status}  ` +
+            `${ph.code_verification_status}  calidad=${ph.quality_rating || "-"}`
+        );
+      }
+    }
+    return;
+  }
+
   // 0) Listar las cuentas de WhatsApp del negocio (necesita business_management)
   if (process.argv.includes("--list-wabas")) {
     const businessId = process.env.SHOPIFY_BUSINESS_ID || "111337664819723";

@@ -345,7 +345,12 @@ async function postInstagramMessage(url, recipientId, body, accessToken) {
  */
 async function sendTextMessage(to, body, options = {}) {
   const phoneNumberId = options.phoneNumberId || process.env.META_PHONE_NUMBER_ID;
-  const accessToken = options.accessToken || process.env.META_ACCESS_TOKEN;
+  // El token de WhatsApp puede ser distinto al de Instagram. Si esta
+  // configurado, se usa ese; si no, se cae al token general.
+  const accessToken =
+    options.accessToken ||
+    process.env.META_WHATSAPP_TOKEN ||
+    process.env.META_ACCESS_TOKEN;
   const graphVersion = options.graphVersion || GRAPH_VERSION;
 
   if (!isConfigured(phoneNumberId) || !isConfigured(accessToken)) {

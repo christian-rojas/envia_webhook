@@ -133,6 +133,15 @@ function buildMissingDataContext({ reason, orderId, matches, channel, greeting }
       );
       break;
 
+    case "sin_verificar":
+      lines.push(
+        `No se pudo verificar el envio del pedido ${orderId} en este momento ` +
+          `por un problema tecnico. NO le digas al cliente que el pedido no ` +
+          `existe ni que no tiene envio. Dile que no pudimos verificar el ` +
+          `estado ahora y ofrece pasar con un asesor.`
+      );
+      break;
+
     case "pedido_sin_envio":
       lines.push(
         `El pedido ${orderId} existe pero no tiene envio generado todavia.`
@@ -274,6 +283,10 @@ async function generateReply({ userText, context, apiKey, model }) {
 
   const prompt = `CONTEXTO DEL PEDIDO:\n${context || "(sin contexto)"}\n\n---\nMENSAJE DEL CLIENTE:\n${userText}`;
 
+  // Timeout: sin esto, una llamada lenta a x.ai puede dejar la funcion de
+  // Vercel colgada hasta que la matan por exceeding maxDuration.
+  const timeoutMs = Number(process.env.XAI_TIMEOUT_MS || 25000);
+
   try {
     const response = await fetch(`${XAI_BASE_URL}/responses`, {
       method: "POST",
@@ -289,6 +302,7 @@ async function generateReply({ userText, context, apiKey, model }) {
         ],
         store: false,
       }),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     const data = await response.json().catch(() => ({}));

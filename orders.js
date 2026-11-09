@@ -16,7 +16,84 @@ const dotenv = require("dotenv");
 
 dotenv.config();
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
+
+// Desde Vercel la conexion directa a Supabase a veces se queda colgada
+// (la instancia es nueva, hay que resolver DNS y abrir el socket). Se
+// acota con un timeout y se reintenta: una consulta colgada mataba la
+// funcion entera y el bot nunca respondia.
+const DB_TIMEOUT_MS = Number(process.env.SUPABASE_TIMEOUT_MS || 8000);
+const DB_RETRIES = Number(process.env.SUPABASE_RETRIES || 2);
+
+let trackingMap = null; // Map<order_id, tracking_id>
+let trackingMapAt = 0;
+// Carga en curso. Se REUTILIZA: dos consultas simultaneas a Supabase desde
+// la misma instancia se quedan colgadas las dos (la segunda espera un
+// socket que la primera tiene ocupado).
+let trackingMapPromise = null;
+
+/**
+ * Ejecuta una consulta a Supabase con timeout y reintentos.
+ *
+ * @param {Function} makeBuilder Fabrica que devuelve la consulta (se vuelve
+ *   a crear en cada intento, porque un builder no se puede reutilizar).
+ * @param {object} [options] { retries, timeoutMs, label }
+ * @returns {Promise<object>} Respuesta de Supabase ({ data, error }).
+ */
+async function dbQuery(makeBuilder, options = {}) {
+  const retries = options.retries ?? DB_RETRIES;
+  const timeoutMs = options.timeoutMs ?? DB_TIMEOUT_MS;
+  const label = options.label || "supabase";
+
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    // AbortController: cancela de verdad la peticion HTTP cuando se pasa el
+    // tiempo. Sin esto, desde Vercel algunas consultas a Supabase se quedan
+    // colgadas 60-90 s y el setTimeout no basta (la promesa nunca resuelve).
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort(new Error(`${label}: timeout de ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    try {
+      const builder = makeBuilder();
+      if (builder && typeof builder.abortSignal === "function") {
+        builder.abortSignal(controller.signal);
+      }
+      const result = await builder;
+      if (result && result.error) {
+        // Error de Supabase (no de red): no insistir, eslogico.
+        return result;
+      }
+      return result;
+    } catch (error) {
+      lastError = error;
+      if (attempt < retries) {
+        console.warn(
+          `[db] ${error.message} -> reintento ${attempt + 1}/${retries}`
+        );
+        await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  throw lastError || new Error(`${label}: fallo desconocido`);
+}
+
+// Calentamiento: abre la conexion con Supabase al cargar el modulo, fuera
+// del reloj de la peticion. Asi la primera consulta real no sufre el
+// arranque en frio.
+// NO se carga nada aqui a proposito: en la fase de "init" de Vercel las
+// promesas en segundo plano pueden quedar congeladas, y el primer request
+// se quedaria esperando a una que nunca avanza. La carga se hace bajo
+// demanda, con tope de espera (ver getTrackingMap).
+
 
 const ENVIA_API_URL = "https://api.envia.com/ship/generaltrack";
 
@@ -104,6 +181,11 @@ async function fetchShipmentsFromEnvia(trackingNumbers) {
         Authorization: `Bearer ${key}`,
       },
       body: JSON.stringify({ trackingNumbers: list }),
+      // Timeout: Envia a veces se demora y sin esto la funcion de Vercel
+      // queda colgada hasta que la matan por maxDuration.
+      signal: AbortSignal.timeout(
+        Number(process.env.ENVIA_TIMEOUT_MS || 15000)
+      ),
     });
 
     const data = await response.json().catch(() => ({}));
@@ -275,11 +357,13 @@ async function findShipment({ phone, text, limit = 30 }) {
     }
 
     // El pedido existe en la tabla pero sin envio generado.
-    const { data } = await supabase
-      .from("order_tracking")
-      .select("order_id")
-      .eq("order_id", orderId)
-      .limit(1);
+    const { data } = await dbQuery(() =>
+      supabase
+        .from("order_tracking")
+        .select("order_id")
+        .eq("order_id", orderId)
+        .limit(1)
+    );
     if (data && data.length > 0) {
       return { shipment: null, orderId, reason: "pedido_sin_envio" };
     }
@@ -322,13 +406,13 @@ async function findShipmentByPhone(phone, { limit = 30 } = {}) {
   const empty = { shipment: null, matches: [] };
   if (!phone) return empty;
 
-  const { data: tracks, error: tracksError } = await supabase
-    .from("order_tracking")
-    .select("order_id, tracking_id")
-    .order("id", { ascending: false })
-    .limit(limit);
+  // Mapa cacheado en lugar de una consulta por mensaje.
+  const map = await getTrackingMap();
+  const tracks = [...map.entries()]
+    .slice(0, limit)
+    .map(([orderId, trackingId]) => ({ order_id: orderId, tracking_id: trackingId }));
 
-  if (tracksError || !tracks || tracks.length === 0) return empty;
+  if (tracks.length === 0) return empty;
 
   const trackingNumbers = tracks.map((t) => t.tracking_id).filter(Boolean);
   if (trackingNumbers.length === 0) return empty;
@@ -360,16 +444,22 @@ async function findShipmentByPhone(phone, { limit = 30 } = {}) {
  */
 async function findShipmentByOrderId(orderId) {
   if (!orderId) return null;
+  const t0 = Date.now();
 
-  const { data, error } = await supabase
-    .from("order_tracking")
-    .select("order_id, tracking_id")
-    .eq("order_id", orderId)
-    .limit(1);
+  // Se usa el mapa cacheado: consultar Supabase en cada mensaje es lento
+  // desde Vercel (65-90 s de forma intermitente).
+  const map = await getTrackingMap();
+  const trackingId = map.get(orderId);
+  console.log(
+    `[envia] (${((Date.now() - t0) / 1000).toFixed(1)}s) ${orderId}: ` +
+      `mapa=${map.size} tracking=${trackingId || "sin envio"}`
+  );
+  if (!trackingId) return null;
 
-  if (error || !data || data.length === 0 || !data[0].tracking_id) return null;
-
-  const raw = await fetchShipmentFromEnvia(data[0].tracking_id);
+  const raw = await fetchShipmentFromEnvia(trackingId);
+  console.log(
+    `[envia] (${((Date.now() - t0) / 1000).toFixed(1)}s) ${orderId}: Envia contesto`
+  );
   const shipment = normalizeShipment(raw);
   if (shipment) shipment.orderId = shipment.orderId || orderId;
   return shipment;
@@ -428,8 +518,114 @@ function isNotPickedUp(shipment) {
   return false;
 }
 
+/**
+ * Mapa pedido -> numero de seguimiento, cacheado en memoria.
+ *
+ * Desde Vercel las consultas a Supabase se latenmucho (65-90 s de forma
+ * intermitente), y una por mensaje hacia que el bot no respondiera nunca.
+ * La tabla tiene unos cientos de filas: se bajan TODAS de una vez y se
+ * cachean, asi que el camino critico no toca Supabase.
+ */
+const TRACKING_MAP_TTL_MS = Number(
+  process.env.TRACKING_MAP_TTL_MS || 5 * 60 * 1000
+);
+
+/**
+ * Devuelve el mapa pedido -> seguimiento, refrescandolo si es viejo.
+ *
+ * @returns {Promise<Map<string, string>>}
+ */
+/**
+ * Devuelve el mapa pedido -> seguimiento.
+ *
+ * Nunca bloquea mas de `maxWaitMs`: si la carga no llega a tiempo se
+ * devuelve lo que haya (puede estar vacio) y la carga sigue en segundo
+ * plano. Es preferible responder "no pude verificar ahora" antes que
+ * dejar al cliente sin respuesta.
+ *
+ * @param {object} [options] { maxWaitMs }
+ * @returns {Promise<Map<string, string>>}
+ */
+async function getTrackingMap({ maxWaitMs = 6000 } = {}) {
+  const ahora = Date.now();
+  const hayMapa = trackingMap && trackingMap.size > 0;
+  const vencido = ahora - trackingMapAt > TRACKING_MAP_TTL_MS;
+
+  // Si ya hay un mapa, se devuelve al instante aunque este viejo: el
+  // refresco va en segundo plano y nunca bloquea la respuesta al cliente.
+  if (hayMapa) {
+    if (vencido && !trackingMapPromise) startTrackingMapLoad();
+    return trackingMap;
+  }
+
+  // Primera vez: se espera, pero no mas de maxWaitMs.
+  if (!trackingMapPromise) startTrackingMapLoad();
+
+  const limite = Date.now() + maxWaitMs;
+  while (!trackingMap && Date.now() < limite) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  if (!trackingMap) {
+    console.warn("[db] el mapa de envios no esta listo todavia");
+    return new Map();
+  }
+  return trackingMap;
+}
+
+/**
+ * Lanza la carga del mapa en segundo plano (una sola a la vez).
+ */
+function startTrackingMapLoad() {
+  trackingMapPromise = loadTrackingMap()
+    .catch((error) => {
+      console.warn("[db] carga del mapa fallo:", error.message);
+    })
+    .finally(() => {
+      trackingMapPromise = null;
+    });
+  return trackingMapPromise;
+}
+
+/**
+ * Carga el mapa pedido -> seguimiento desde Supabase.
+ *
+ * Se usa fetch crudo en lugar del cliente de supabase-js: desde Vercel el
+ * cliente se quedaba colgado (60-90 s) de forma intermitente, mientras que
+ * la misma consulta con fetch crudo responde en ~400 ms.
+ *
+ * @returns {Promise<Map<string, string>>}
+ */
+async function loadTrackingMap() {
+  const url = `${process.env.SUPABASE_URL}/rest/v1/order_tracking?select=order_id,tracking_id&limit=1000`;
+  const key = process.env.SUPABASE_ANON_KEY;
+
+  const response = await fetch(url, {
+    headers: { apikey: key, Authorization: `Bearer ${key}` },
+    signal: AbortSignal.timeout(
+      Number(process.env.SUPABASE_TIMEOUT_MS || 15000)
+    ),
+  });
+
+  if (!response.ok) {
+    throw new Error(`mapa de envios: HTTP ${response.status}`);
+  }
+
+  const rows = await response.json();
+  const map = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (row.order_id && row.tracking_id) map.set(row.order_id, row.tracking_id);
+  }
+  trackingMap = map;
+  trackingMapAt = Date.now();
+  console.log(`[db] mapa de envios: ${map.size} pedidos`);
+  return map;
+}
+
 module.exports = {
   supabase,
+  dbQuery,
+  getTrackingMap,
   normalizePhone,
   phonesMatch,
   fetchShipmentFromEnvia,
