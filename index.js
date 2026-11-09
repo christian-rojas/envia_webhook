@@ -101,7 +101,9 @@ async function getManufacturingNotes(resolved) {
 
   try {
     // Si ya se consulto Shopify, se reutiliza (evita una segunda llamada).
-    const ctx = resolved.shopify || (await shopify.getOrderContext(orderId));
+    const ctx =
+      resolved.shopify ||
+      (await shopify.getOrderContext(orderId, { signal: resolved.signal }));
 
     if (!ctx.found) {
       console.log(
@@ -173,6 +175,14 @@ inject();
 // Permitir todas las solicitudes (modo abierto)
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+
+// Tope de espera para las llamadas HTTP salientes que NO tienenAbortSignal.
+// Sin esto, una API que se cuelga deja la promesa sin resolver para siempre:
+// en /webhook/shopify eso cuelga la request entera y Shopify reintenta el
+// webhook (envios duplicados); en /envia/:tracking_id el usuario ve un 524.
+const ENVIA_GENERATE_TIMEOUT_MS = Number(process.env.ENVIA_GENERATE_TIMEOUT_MS || 15000);
+const ENVIA_TRACK_TIMEOUT_MS = Number(process.env.ENVIA_TRACK_TIMEOUT_MS || 15000);
+const GEOCODE_TIMEOUT_MS = Number(process.env.GEOCODE_TIMEOUT_MS || 8000);
 
 const app = express();
 // Ultimo mensaje entrante (Instagram o WhatsApp). Lo expone /health para
@@ -254,6 +264,7 @@ async function getPostalCodeByCommune(address, commune) {
         headers: {
           "Content-Type": "application/json",
         },
+        signal: AbortSignal.timeout(GEOCODE_TIMEOUT_MS),
       }
     );
     const data = await response.json();
@@ -414,11 +425,16 @@ async function createEnviaShipment(shipment, order) {
         Authorization: `Bearer ${ENVIA_API_KEY}`,
       },
       body: JSON.stringify(shipment),
+      signal: AbortSignal.timeout(ENVIA_GENERATE_TIMEOUT_MS),
     });
     console.log("termino el fetch");
     return await response.json();
   } catch (error) {
     console.log("error final", error);
+    // Antes se devolvia undefined y el llamador hacia `data.error` sobre
+    // undefined -> TypeError. Ahora se devuelve un error con la misma forma
+    // que devuelve Envia, para que caiga en la rama de reintento.
+    return { error: { message: error.message || "fallo al llamar a Envia" } };
   }
 }
 
@@ -465,6 +481,18 @@ app.post("/webhook/shopify", async (req, res) => {
   const order = req.body;
   console.log(JSON.stringify(order, null, 2));
 
+  // Este webhook lo reintenta Shopify si no recibe respuesta rapido, y cada
+  // reintento vuelve a pedir el envio a Envia (envios duplicados). Ademas un
+  // error de SMTP (Zoho) llegaba a cancelar la respuesta y la request se
+  // quedaba colgada hasta que Vercel la mataba. Por eso: exactamente una
+  // respuesta, y el email nunca puede romper el flujo.
+  let respondido = false;
+  const responder = (status, body) => {
+    if (respondido) return;
+    respondido = true;
+    res.status(status).send(body);
+  };
+
   try {
     // Now we need to await the formatEnviaShipment function
     const shipment = await formatEnviaShipment(order);
@@ -474,12 +502,37 @@ app.post("/webhook/shopify", async (req, res) => {
     // Send to Envia API
     const response = await createEnviaShipment(shipment, order);
 
-    if (response.error) {
-      res.status(500).send(response.error.message);
-    }
-
     const data = response;
     console.log(data);
+
+    if (data.error) {
+      console.error("Error creating shipment:", data.error?.message);
+
+      // 1) Aviso por email. Va en su propio try/catch: si el SMTP falla NO
+      //    puede impedir el reintento del envio ni la respuesta del webhook.
+      try {
+        await sendOrderConfirmationEmail(
+          shipment.packages[0].content,
+          data.error?.message ?? "error"
+        );
+      } catch (emailError) {
+        console.error("Error sending email:", emailError);
+      }
+
+      // 2) Reintento con servicio "extended".
+      shipment.shipment.service = "extended";
+      const responseExtended = await createEnviaShipment(shipment, order);
+      if (responseExtended.meta === "generate") {
+        try {
+          await saveShipmentData(order, shipment, responseExtended);
+        } catch (error) {
+          console.error("Error saving to Supabase:", error);
+        }
+        return responder(200, "Shipment created");
+      }
+      return responder(500, "Error creating shipment");
+    }
+
     if (data.meta === "generate") {
       try {
         await saveShipmentData(order, shipment, data);
@@ -489,49 +542,46 @@ app.post("/webhook/shopify", async (req, res) => {
 
       if (data.data[0].currentBalance < 20000) {
         try {
-          await sendOrderConfirmationEmail(shipment.packages[0].content, data.data[0].currentBalance);
+          await sendOrderConfirmationEmail(
+            shipment.packages[0].content,
+            data.data[0].currentBalance
+          );
         } catch (emailError) {
           console.error("Error sending email:", emailError);
         }
       }
-      reverseGeocode(order.shipping_address.latitude, order.shipping_address.longitude)
+
+      // El geocodificado se enriquece despues: se registra con waitUntil para
+      // que Vercel no congele la funcion y la promesa nunca avance.
+      const waitUntil =
+        req.waitUntil || vercelWaitUntil || ((p) => p && p.catch(() => {}));
+
+      const geoPromise = reverseGeocode(
+        order.shipping_address.latitude,
+        order.shipping_address.longitude
+      )
         .then((data) => {
           if (data && data.length > 0) {
             const addressGeo = data.split(",")[0];
             const zipGeo = data.split(",")[1];
             order.shipping_address.zip = zipGeo;
             order.shipping_address.address1 = addressGeo;
-            saveShipmentDataWithEnvia(order);
+            return saveShipmentDataWithEnvia(order);
           }
         })
         .catch((error) => {
           console.error("Error in reverse geocoding:", error);
         });
-      res.status(200).send("Shipment created");
+
+      if (waitUntil) waitUntil(geoPromise);
+
+      return responder(200, "Shipment created");
     }
-    if (data.error) {
-      console.error("Error creating shipment:", data.error?.message);
-      try {
-        await sendOrderConfirmationEmail(shipment.packages[0].content, data.error?.message ?? "error");
-        shipment.shipment.service = "extended";
-        const responseExtended = await createEnviaShipment(shipment, order);
-        if (responseExtended.meta === "generate") {
-          try {
-            await saveShipmentData(order, shipment, responseExtended);
-          } catch (error) {
-            console.error("Error saving to Supabase:", error);
-          }
-          res.status(200).send("Shipment created");
-        } else {
-          res.status(500).send("Error creating shipment");
-        }
-      } catch (emailError) {
-        console.error("Error sending email:", emailError);
-      }
-    }
+
+    return responder(500, "Error creating shipment");
   } catch (error) {
     console.log("error final", error);
-    res.status(500).send("Error creating shipment");
+    return responder(500, "Error creating shipment");
   }
 });
 
@@ -706,6 +756,7 @@ app.get("/envia/:tracking_id", async (req, res) => {
         "Content-Type": "application/json",
         Authorization: `Bearer ${ENVIA_API_KEY}`,
       },
+      signal: AbortSignal.timeout(ENVIA_TRACK_TIMEOUT_MS),
     });
 
     const data = await response.json();
@@ -1083,12 +1134,23 @@ app.post("/webhook/instagram", async (req, res) => {
  * @param {Promise} promise Promesa original.
  * @param {number} ms Tope de espera.
  * @param {*} fallback Valor si se pasa el tiempo.
+ * @param {AbortController} [controller] Se aborta al agotarse el tiempo, para
+ *   que la peticion HTTP subyacente se cancele de verdad. Sin esto la promesa
+ *   abandonada sigue viva, mantiene la funcion de Vercel encendida y las
+ *   llamadas debajo del `await` continues gastando tiempo y cuota.
  * @returns {Promise<*>}
  */
-function withTimeout(promise, ms, fallback) {
+function withTimeout(promise, ms, fallback, controller) {
   return Promise.race([
     promise,
-    new Promise((resolve) => setTimeout(() => resolve(fallback), ms)),
+    new Promise((resolve) =>
+      setTimeout(() => {
+        if (controller && !controller.signal.aborted) {
+          controller.abort(new Error(`timeout de ${ms}ms`));
+        }
+        resolve(fallback);
+      }, ms)
+    ),
   ]);
 }
 
@@ -1100,9 +1162,14 @@ async function resolveOrderById(orderId) {
     );
 
   mark("consultando Supabase...");
+  // Controller propio: si la busqueda pasa de 15 s se aborta y las peticiones
+  // HTTP de abajo (Envia, Shopify) se cancelan de verdad.
+  const controller = new AbortController();
   const resultado = await withTimeout(
     (async () => {
-      const shipment = await orders.findShipmentByOrderId(orderId);
+      const shipment = await orders.findShipmentByOrderId(orderId, {
+        signal: controller.signal,
+      });
       mark(`envio: ${shipment ? shipment.status : "null"}`);
       if (shipment) {
         return { shipment, orderId: shipment.orderId || orderId, reason: "pedido" };
@@ -1110,7 +1177,7 @@ async function resolveOrderById(orderId) {
 
       // Sin envio en Envia: el pedido puede existir y estar en fabricacion.
       mark("consultando Shopify...");
-      const ctx = await shopify.getOrderContext(orderId).catch((error) => {
+      const ctx = await shopify.getOrderContext(orderId, { signal: controller.signal }).catch((error) => {
         console.error(`[shopify] error leyendo ${orderId}:`, error.message);
         return null;
       });
@@ -1122,20 +1189,27 @@ async function resolveOrderById(orderId) {
           orderId,
           reason: "pedido_sin_envio",
           shopify: ctx,
+          signal: controller.signal,
         };
       }
 
       mark("verificando en order_tracking...");
       if (await orderExistsInSupabase(orderId)) {
         mark("existe en order_tracking");
-        return { shipment: null, orderId, reason: "pedido_sin_envio" };
+        return {
+          shipment: null,
+          orderId,
+          reason: "pedido_sin_envio",
+          signal: controller.signal,
+        };
       }
 
       mark("no existe");
       return { shipment: null, orderId, reason: "pedido_no_encontrado" };
     })(),
     15000,
-    null
+    null,
+    controller
   );
 
   if (!resultado) {

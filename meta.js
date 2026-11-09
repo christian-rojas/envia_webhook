@@ -14,6 +14,12 @@ const crypto = require("crypto");
 
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION || "v23.0";
 
+// Timeout del POST a Graph API. Sin esto, si graph.facebook.com se cuelga la
+// promesa NUNCA resuelve: el `await sender(...)` que esta en el camino critico
+// se queda esperando para siempre, el cliente no recibe respuesta y la funcion
+// sigue viva hasta que Vercel la mata por maxDuration.
+const META_TIMEOUT_MS = Number(process.env.META_TIMEOUT_MS || 10000);
+
 /**
  * Cache en memoria del ig-user-id de la cuenta de negocio.
  *
@@ -300,6 +306,7 @@ async function postInstagramMessage(url, recipientId, body, accessToken) {
         recipient: { id: String(recipientId) },
         message: { text: String(body).slice(0, 1000) },
       }),
+      signal: AbortSignal.timeout(META_TIMEOUT_MS),
     });
 
     const data = await response.json().catch(() => ({}));
@@ -378,6 +385,7 @@ async function sendTextMessage(to, body, options = {}) {
         type: "text",
         text: { body: String(body).slice(0, 4096) },
       }),
+      signal: AbortSignal.timeout(META_TIMEOUT_MS),
     });
 
     const data = await response.json().catch(() => ({}));

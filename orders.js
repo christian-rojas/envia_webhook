@@ -13,6 +13,7 @@
 
 const { createClient } = require("@supabase/supabase-js");
 const dotenv = require("dotenv");
+const { combineSignals } = require("./abort.js");
 
 dotenv.config();
 
@@ -152,8 +153,8 @@ function phonesMatch(a, b) {
  * @param {string|string[]} trackingNumbers Numero(s) de seguimiento.
  * @returns {Promise<object|null>} Primer envio encontrado, o null.
  */
-async function fetchShipmentFromEnvia(trackingNumbers) {
-  const list = await fetchShipmentsFromEnvia(trackingNumbers);
+async function fetchShipmentFromEnvia(trackingNumbers, options = {}) {
+  const list = await fetchShipmentsFromEnvia(trackingNumbers, options);
   return list[0] || null;
 }
 
@@ -167,7 +168,7 @@ async function fetchShipmentFromEnvia(trackingNumbers) {
  * @param {string|string[]} trackingNumbers Numero(s) de seguimiento.
  * @returns {Promise<object[]>} Lista de envios crudos (puede estar vacia).
  */
-async function fetchShipmentsFromEnvia(trackingNumbers) {
+async function fetchShipmentsFromEnvia(trackingNumbers, { signal } = {}) {
   const key = process.env.ENVIA_API_KEY;
   if (!key || !trackingNumbers) return [];
 
@@ -183,8 +184,10 @@ async function fetchShipmentsFromEnvia(trackingNumbers) {
       body: JSON.stringify({ trackingNumbers: list }),
       // Timeout: Envia a veces se demora y sin esto la funcion de Vercel
       // queda colgada hasta que la matan por maxDuration.
-      signal: AbortSignal.timeout(
-        Number(process.env.ENVIA_TIMEOUT_MS || 15000)
+      // `signal` externo: cancela la peticion si el llamador ya no la espera.
+      signal: combineSignals(
+        signal,
+        AbortSignal.timeout(Number(process.env.ENVIA_TIMEOUT_MS || 15000))
       ),
     });
 
@@ -442,7 +445,7 @@ async function findShipmentByPhone(phone, { limit = 30 } = {}) {
  * @param {string} orderId ID de pedido tipo "MON3007".
  * @returns {Promise<object|null>} Envio normalizado.
  */
-async function findShipmentByOrderId(orderId) {
+async function findShipmentByOrderId(orderId, { signal } = {}) {
   if (!orderId) return null;
   const t0 = Date.now();
 
@@ -456,7 +459,7 @@ async function findShipmentByOrderId(orderId) {
   );
   if (!trackingId) return null;
 
-  const raw = await fetchShipmentFromEnvia(trackingId);
+  const raw = await fetchShipmentFromEnvia(trackingId, { signal });
   console.log(
     `[envia] (${((Date.now() - t0) / 1000).toFixed(1)}s) ${orderId}: Envia contesto`
   );

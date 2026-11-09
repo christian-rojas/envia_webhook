@@ -12,7 +12,10 @@
  */
 
 const XAI_BASE_URL = process.env.XAI_BASE_URL || "https://api.x.ai/v1";
-const XAI_MODEL = process.env.XAI_MODEL || "grok-4.7";
+// grok-4.7 es un modelo de RAZONAMIENTO: con el prompt real de produccion
+// tardaba 20-24 s, justo contra el timeout, y fallaba de forma intermitente.
+// Los modelos "non-reasoning" responden lo mismo en ~1,3 s.
+const XAI_MODEL = process.env.XAI_MODEL || "grok-4.20-non-reasoning";
 
 /**
  * Palabras que indican que el cliente quiere hablar con una persona.
@@ -304,55 +307,71 @@ async function generateReply({ userText, context, apiKey, model }) {
 
   // Timeout: sin esto, una llamada lenta a x.ai puede dejar la funcion de
   // Vercel colgada hasta que la matan por exceeding maxDuration.
-  const timeoutMs = Number(process.env.XAI_TIMEOUT_MS || 25000);
+  const timeoutMs = Number(process.env.XAI_TIMEOUT_MS || 12000);
+  // Un reintento como red de seguridad: solo ante timeout o error de red,
+  // nunca ante un error de la API (un 400 no se arregla reintentando).
+  const maxAttempts = Number(process.env.XAI_MAX_ATTEMPTS || 2);
+  const backoffMs = Number(process.env.XAI_RETRY_BACKOFF_MS || 800);
 
-  try {
-    const response = await fetch(`${XAI_BASE_URL}/responses`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${key}`,
-      },
-      body: JSON.stringify({
-        model: modelId,
-        input: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: prompt },
-        ],
-        store: false,
-      }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = await fetch(`${XAI_BASE_URL}/responses`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${key}`,
+        },
+        body: JSON.stringify({
+          model: modelId,
+          input: [
+            { role: "system", content: SYSTEM_PROMPT },
+            { role: "user", content: prompt },
+          ],
+          store: false,
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
 
-    const data = await response.json().catch(() => ({}));
+      const data = await response.json().catch(() => ({}));
 
-    if (!response.ok) {
-      const detail = data?.error?.message || `HTTP ${response.status}`;
-      return { ok: false, reply: "", error: detail };
-    }
+      if (!response.ok) {
+        const detail = data?.error?.message || `HTTP ${response.status}`;
+        return { ok: false, reply: "", error: detail };
+      }
 
-    // La Responses API devuelve output_text o el array output con items de tipo message.
-    let text = "";
-    if (typeof data.output_text === "string" && data.output_text) {
-      text = data.output_text;
-    } else if (Array.isArray(data.output)) {
-      for (const item of data.output) {
-        if (item.type === "message" && Array.isArray(item.content)) {
-          for (const part of item.content) {
-            if (part.type === "output_text" && part.text) text += part.text;
+      // La Responses API devuelve output_text o el array output con items de tipo message.
+      let text = "";
+      if (typeof data.output_text === "string" && data.output_text) {
+        text = data.output_text;
+      } else if (Array.isArray(data.output)) {
+        for (const item of data.output) {
+          if (item.type === "message" && Array.isArray(item.content)) {
+            for (const part of item.content) {
+              if (part.type === "output_text" && part.text) text += part.text;
+            }
           }
         }
       }
-    }
 
-    if (!text) {
-      return { ok: false, reply: "", error: "La IA no devolvio texto" };
-    }
+      if (!text) {
+        return { ok: false, reply: "", error: "La IA no devolvio texto" };
+      }
 
-    return { ok: true, reply: text.trim() };
-  } catch (error) {
-    return { ok: false, reply: "", error: error.message };
+      return { ok: true, reply: text.trim() };
+    } catch (error) {
+      const reintentable = error?.name === "TimeoutError" || error?.name === "AbortError" || /timeout|aborted|fetch failed|ECONN/i.test(error?.message || "");
+      if (attempt < maxAttempts && reintentable) {
+        console.warn(
+          `[ai] x.ai fallo (${error.message}) -> reintento ${attempt}/${maxAttempts - 1} en ${backoffMs}ms`
+        );
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+        continue;
+      }
+      return { ok: false, reply: "", error: error.message };
+    }
   }
+
+  return { ok: false, reply: "", error: "x.ai: sin intentos disponibles" };
 }
 
 module.exports = {

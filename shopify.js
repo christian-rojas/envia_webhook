@@ -21,6 +21,8 @@
  * todo el historial.
  */
 
+const { combineSignals } = require("./abort.js");
+
 // En local carga el .env; en Vercel no hace nada (no hay archivo .env).
 // dotenv no pisa las variables ya definidas, asi que en produccion manda Vercel.
 // Va antes de leer las variables de entorno.
@@ -104,7 +106,7 @@ async function getAccessToken({ force = false } = {}) {
  * @param {object} [options] { method, params, body }
  * @returns {Promise<object>} JSON de la respuesta.
  */
-async function shopifyFetch(path, { method = "GET", params = {}, body } = {}) {
+async function shopifyFetch(path, { method = "GET", params = {}, body, signal } = {}) {
   const url = new URL(
     `https://${SHOPIFY_SHOP}.myshopify.com/admin/api/${API_VERSION}${path}`
   );
@@ -122,7 +124,7 @@ async function shopifyFetch(path, { method = "GET", params = {}, body } = {}) {
         "X-Shopify-Access-Token": token,
       },
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: combineSignals(signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)),
     });
 
   let token = await getAccessToken();
@@ -181,7 +183,7 @@ function normalizeOrderName(value) {
  * @param {object} [options] { fresh } ignora la cache.
  * @returns {Promise<object|null>} El pedido, o null si no existe.
  */
-async function getOrder(orderName, { fresh = false } = {}) {
+async function getOrder(orderName, { fresh = false, signal } = {}) {
   const name = normalizeOrderName(orderName);
   if (!name) return null;
 
@@ -217,7 +219,7 @@ async function getOrder(orderName, { fresh = false } = {}) {
   }`;
 
   // La busqueda de GraphQL espera el formato "name:MON3007".
-  const node = await graphql(query, { name: `name:${name}` }).then(
+  const node = await graphql(query, { name: `name:${name}` }, { signal }).then(
     (data) => data?.orders?.edges?.[0]?.node || null
   );
 
@@ -228,7 +230,7 @@ async function getOrder(orderName, { fresh = false } = {}) {
 
   // Campos que solo existen en REST: note_attributes y las propiedades de
   // las lineas. Se piden por id, que si funciona para pedidos antiguos.
-  const rest = await fetchOrderRest(node.id).catch(() => null);
+  const rest = await fetchOrderRest(node.id, { signal }).catch(() => null);
 
   const metafields = (node.metafields?.edges || [])
     .map((e) => e.node)
@@ -267,10 +269,10 @@ async function getOrder(orderName, { fresh = false } = {}) {
  * @param {string} gid Id del pedido (gid://shopify/Order/...).
  * @returns {Promise<object|null>}
  */
-async function fetchOrderRest(gid) {
+async function fetchOrderRest(gid, { signal } = {}) {
   const id = String(gid || "").split("/").pop();
   if (!id) return null;
-  const data = await shopifyFetch(`/orders/${id}.json`);
+  const data = await shopifyFetch(`/orders/${id}.json`, { signal });
   return data.order || null;
 }
 
@@ -281,7 +283,7 @@ async function fetchOrderRest(gid) {
  * @param {object} [variables] Variables.
  * @returns {Promise<object>} data de la respuesta.
  */
-async function graphql(query, variables = {}) {
+async function graphql(query, variables = {}, { signal } = {}) {
   const url = `https://${SHOPIFY_SHOP}.myshopify.com/admin/api/${API_VERSION}/graphql.json`;
   const doRequest = async (token) =>
     fetch(url, {
@@ -291,7 +293,7 @@ async function graphql(query, variables = {}) {
         "X-Shopify-Access-Token": token,
       },
       body: JSON.stringify({ query, variables }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: combineSignals(signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)),
     });
 
   let token = await getAccessToken();
@@ -325,9 +327,9 @@ async function graphql(query, variables = {}) {
  * @param {string} orderName Nombre del pedido.
  * @returns {Promise<object>} { name, found, notes, note, properties, metafields, comments }
  */
-async function getOrderContext(orderName) {
+async function getOrderContext(orderName, { signal } = {}) {
   const name = normalizeOrderName(orderName);
-  const order = await getOrder(name);
+  const order = await getOrder(name, { signal });
 
   if (!order) {
     return {

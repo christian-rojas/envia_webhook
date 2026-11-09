@@ -9,14 +9,21 @@ const ZOHO_EMAIL = process.env.ZOHO_EMAIL;
 const ZOHO_PASSWORD = process.env.ZOHO_PASSWORD;
 
 // Create the transporter
+// Tiempos de conexion explicitos: sin ellos, nodemailer puede quedarse
+// esperando minutos a smtp.zoho.com. Ese await estaba en el camino CRITICO
+// del webhook de Shopify, asi que un SMTP lento colgaba la request entera
+// (y Shopify la reintentaba, generando envios duplicados).
 const transporter = nodemailer.createTransport({
-  host: "smtp.zoho.com",
-  port: 465,
-  secure: true,
+  host: process.env.SMTP_HOST || "smtp.zoho.com",
+  port: Number(process.env.SMTP_PORT || 465),
+  secure: process.env.SMTP_SECURE ? process.env.SMTP_SECURE !== "false" : true,
   auth: {
     user: ZOHO_EMAIL,
     pass: ZOHO_PASSWORD,
   },
+  connectionTimeout: Number(process.env.SMTP_CONNECTION_TIMEOUT_MS || 10000),
+  greetingTimeout: Number(process.env.SMTP_GREETING_TIMEOUT_MS || 10000),
+  socketTimeout: Number(process.env.SMTP_SOCKET_TIMEOUT_MS || 20000),
 });
 
 // Add this function to send emails
