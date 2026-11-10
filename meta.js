@@ -343,7 +343,7 @@ async function postInstagramMessage(url, recipientId, body, accessToken) {
  *
  * Solo funciona dentro de la ventana de atencion de 24h abierta por el
  * cliente. Fuera de ella, Meta rechaza el mensaje y exige una plantilla
- * aprobada.
+ * aprobada: para eso usar sendTemplateMessage().
  *
  * @param {string} to Numero del destinatario en formato internacional (sin +).
  * @param {string} body Texto del mensaje.
@@ -413,6 +413,95 @@ async function sendTextMessage(to, body, options = {}) {
   }
 }
 
+/**
+ * Envia un mensaje con PLANTILLA por WhatsApp Cloud API.
+ *
+ * Es lo unico que se puede mandar fuera de la ventana de 24h del cliente
+ * (por ejemplo, avisar que un pedido fue enviado). Requiere una plantilla
+ * aprobada y un metodo de pago configurado en la cuenta; sin metodo de pago
+ * Meta acepta el mensaje pero el destinatario no lo ve.
+ *
+ * @param {string} to Numero del destinatario en formato internacional (sin +).
+ * @param {string} templateName Nombre de la plantilla aprobada.
+ * @param {string[]} parameters Valores de los placeholders {{1}}, {{2}}... en orden.
+ * @param {object} [options] { phoneNumberId, accessToken, graphVersion, languageCode }.
+ * @returns {Promise<{ok: boolean, status: number, data?: object, error?: string}>}
+ */
+async function sendTemplateMessage(to, templateName, parameters = [], options = {}) {
+  const phoneNumberId = options.phoneNumberId || process.env.META_PHONE_NUMBER_ID;
+  const accessToken =
+    options.accessToken ||
+    process.env.META_WHATSAPP_TOKEN ||
+    process.env.META_ACCESS_TOKEN;
+  const graphVersion = options.graphVersion || GRAPH_VERSION;
+  const languageCode = options.languageCode || "es";
+
+  if (!isConfigured(phoneNumberId) || !isConfigured(accessToken)) {
+    return {
+      ok: false,
+      status: 500,
+      error: "META_PHONE_NUMBER_ID o META_ACCESS_TOKEN no configurados (placeholder o vacio)",
+    };
+  }
+  if (!isConfigured(templateName)) {
+    return { ok: false, status: 500, error: "plantilla no configurada" };
+  }
+
+  const cleanTo = String(to).replace(/\D/g, "");
+  const url = `https://graph.facebook.com/${graphVersion}/${phoneNumberId}/messages`;
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: cleanTo,
+        type: "template",
+        template: {
+          name: templateName,
+          language: { code: languageCode },
+          components: parameters.length
+            ? [
+                {
+                  type: "body",
+                  parameters: parameters.map((p) => ({ type: "text", text: String(p) })),
+                },
+              ]
+            : [],
+        },
+      }),
+      signal: AbortSignal.timeout(META_TIMEOUT_MS),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const detail =
+        data?.error?.message || data?.error?.error_user_msg || `HTTP ${response.status}`;
+      const subcode = data?.error?.error_subcode;
+      let hint = "";
+      if (subcode === 2534014) {
+        hint =
+          " | No se encontro al destinatario. En WhatsApp el numero debe " +
+          "existir y tener habilitada la conversacion con la empresa.";
+      } else if (data?.error?.code === 131009 || /parameter|parameter_format/i.test(detail)) {
+        hint =
+          " | La plantilla no acepta esa cantidad de parametros o el " +
+          "formato no calza. Revisa el cuerpo de la plantilla.";
+      }
+      return { ok: false, status: response.status, data, error: detail + hint };
+    }
+
+    return { ok: true, status: response.status, data };
+  } catch (error) {
+    return { ok: false, status: 0, error: error.message };
+  }
+}
+
 module.exports = {
   GRAPH_VERSION,
   isConfigured,
@@ -423,5 +512,6 @@ module.exports = {
   parseInboundMessages,
   parseInstagramMessages,
   sendTextMessage,
+  sendTemplateMessage,
   sendInstagramMessage,
 };

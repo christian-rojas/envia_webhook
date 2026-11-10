@@ -90,7 +90,7 @@ const b64url = (buf) => buf.toString("base64").replace(/\+/g, "-").replace(/\//g
       resolve(u.searchParams.get("code"));
     });
     server.listen(PORT, () => console.log(`   esperando el callback en ${REDIRECT} (5 min)...`));
-    setTimeout(() => { server.close(); reject(new Error("timeout esperando la autorizacion")); }, 300000);
+    setTimeout(() => { server.close(); reject(new Error("timeout esperando la autorizacion")); }, 900000);
   });
   console.log(`\n3) Codigo recibido (${code.slice(0, 12)}...)`);
 

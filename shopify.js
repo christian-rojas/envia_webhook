@@ -605,6 +605,150 @@ function isPreparedOrder(order) {
   return (order.fulfillments || []).length > 0;
 }
 
+
+// ---------------------------------------------------------------------------
+// Contenido de la tienda: politicas y guias de tallas
+// ---------------------------------------------------------------------------
+// Requiere los scopes `read_content` (paginas) y `read_products`
+// (descripciones, donde esta la tabla de medidas de cada prenda).
+
+let pagesCache = null; // Map<handle, {title, body}>
+let pagesCacheAt = 0;
+const PAGES_TTL_MS = Number(process.env.SHOPIFY_PAGES_TTL_MS || 30 * 60 * 1000);
+
+/**
+ * Quita el HTML de un texto y lo deja legible.
+ *
+ * @param {string} html Texto con HTML.
+ * @returns {string}
+ */
+function htmlToText(html) {
+  if (!html) return "";
+  return String(html)
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<\/(p|div|tr|li|h[1-6])>/gi, "\n")
+    .replace(/<\/t[dh]>/gi, " | ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/**
+ * Trae todas las paginas de la tienda (guia de tallas, politicas, etc).
+ *
+ * @returns {Promise<Map<string, object>>} handle -> { title, body }
+ */
+async function getPages() {
+  if (pagesCache && Date.now() - pagesCacheAt < PAGES_TTL_MS) {
+    return pagesCache;
+  }
+
+  const query = `query {
+    pages(first: 50) {
+      nodes { title handle body }
+    }
+  }`;
+
+  const data = await graphql(query);
+  const map = new Map();
+  for (const node of data.pages?.nodes || []) {
+    if (node?.handle) map.set(node.handle, { title: node.title, body: node.body });
+  }
+  pagesCache = map;
+  pagesCacheAt = Date.now();
+  console.log(`[shopify] paginas: ${map.size}`);
+  return map;
+}
+
+/**
+ * Texto de la politica de cambios y devoluciones.
+ *
+ * Busca una pagina cuyo titulo o handle hable de cambios, devoluciones,
+ * garantias o reembolsos.
+ *
+ * @returns {Promise<string>}
+ */
+async function getPolicyText() {
+  try {
+    const pages = await getPages();
+    const regex = /cambio|devolucion|garantia|reembolso|policy|politica/i;
+    for (const [handle, page] of pages) {
+      if (regex.test(handle) || regex.test(page.title || "")) {
+        const text = htmlToText(page.body);
+        console.log(`[shopify] politica de cambios/devoluciones: ${handle}`);
+        return text.slice(0, 4000);
+      }
+    }
+    console.log("[shopify] no hay pagina de cambios/devoluciones");
+  } catch (error) {
+    console.warn("[shopify] no se pudo leer la politica:", error.message);
+  }
+  return "";
+}
+
+/**
+ * Texto de la guia de tallas de la tienda.
+ *
+ * @returns {Promise<string>}
+ */
+async function getSizeGuideText() {
+  try {
+    const pages = await getPages();
+    const regex = /talla|size|medida/i;
+    for (const [handle, page] of pages) {
+      if (regex.test(handle) || regex.test(page.title || "")) {
+        const text = htmlToText(page.body);
+        console.log(`[shopify] guia de tallas: ${handle} (${text.length} chars)`);
+        return text.slice(0, 4000);
+      }
+    }
+    console.log("[shopify] no hay guia de tallas");
+  } catch (error) {
+    console.warn("[shopify] no se pudo leer la guia de tallas:", error.message);
+  }
+  return "";
+}
+
+/**
+ * Tabla de medidas de un producto, extraida de su descripcion.
+ *
+ * En las descripciones del store la tabla viene como "TABLA DE MEDIDAS POR
+ * TALLA" seguida de una tabla.
+ *
+ * @param {string} titulo Titulo (o parte) del producto.
+ * @returns {Promise<string>}
+ */
+async function getProductSizeTable(titulo) {
+  if (!titulo) return "";
+  try {
+    const query = `query ($title: String!) {
+      products(first: 1, query: $title) {
+        nodes { title bodyHtml }
+      }
+    }`;
+    const data = await graphql(query, { title: `title:*${titulo}*` });
+    const node = data.products?.nodes?.[0];
+    if (!node?.bodyHtml) return "";
+
+    const text = htmlToText(node.bodyHtml);
+    const idx = text.search(/tabla\s+de\s+medidas/i);
+    if (idx === -1) return "";
+    return text.slice(idx, idx + 1200);
+  } catch (error) {
+    console.warn("[shopify] no se pudo leer la tabla de medidas:", error.message);
+    return "";
+  }
+}
+
 module.exports = {
   SHOPIFY_SHOP,
   API_VERSION,
@@ -621,4 +765,9 @@ module.exports = {
   buildPhoneIndex,
   getPhoneIndex,
   findOrdersByPhone,
+  htmlToText,
+  getPages,
+  getPolicyText,
+  getSizeGuideText,
+  getProductSizeTable,
 };

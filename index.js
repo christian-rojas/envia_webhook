@@ -2,7 +2,6 @@ const express = require("express");
 const crypto = require("crypto");
 const bodyParser = require("body-parser");
 const cors = require("cors");
-const twilio = require("twilio");
 // import fetch from "node-fetch";
 const fetch = (...args) => import("node-fetch").then(({ default: fetch }) => fetch(...args));
 const { sendOrderConfirmationEmail, reverseGeocode } = require("./utils.js");
@@ -427,7 +426,7 @@ async function createEnviaShipment(shipment, order) {
     await sendMessage(order);
     console.log(JSON.stringify("Mensaje enviado exitosamente"));
   } catch (error) {
-    console.error("error on sending message by twillio:", error);
+    console.error("error enviando el mensaje de whatsapp:", error);
   }
 
   try {
@@ -451,38 +450,43 @@ async function createEnviaShipment(shipment, order) {
   }
 }
 
+/**
+ * Avisa al cliente que su pedido fue recibido, por WhatsApp Cloud API.
+ *
+ * Antes esto usaba Twilio con el numero de prueba de EE.UU. (+15557634616),
+ * que nunca le llegaba a un cliente chileno. Ahora usa la Cloud API con
+ * plantilla aprobada (obligatorio fuera de la ventana de 24 h del cliente).
+ *
+ * Para que el mensaje salga hacen falta dos cosas que son de la cuenta, no
+ * del codigo: la app publicada y un metodo de pago en la cuenta (sin metodo
+ * de pago Meta acepta el mensaje pero el destinatario no lo ve).
+ */
 async function sendMessage(order) {
-  //   const order = req.body;
-  const customerName = order.customer.first_name;
-  let phone = order.shipping_address.phone;
-  phone = phone.replace(/\s+/g, ""); // Remove all spaces from the phone number
+  const customerName = (order.customer && order.customer.first_name) || "cliente";
+  let phone = String((order.shipping_address && order.shipping_address.phone) || "").replace(/\s+/g, "");
+  if (!phone.startsWith("+56")) phone = "+56" + phone;
+  const orderId = String(order.order_number || "").toUpperCase();
 
-  console.log("phone", phone);
-
-  // check if the phone variable has prefix == +56 if not add it
-  if (!phone.startsWith("+56")) {
-    phone = "+56" + phone;
+  // Plantilla con numero de seguimiento (opcional): solo si esta aprobada.
+  const templateConSeguimiento = process.env.WHATSAPP_TEMPLATE_NAME_TRACKING;
+  const tracking = order.tracking_number || order.trackingNumber || null;
+  if (templateConSeguimiento && tracking) {
+    const eta =
+      order.estimated_delivery || order.estimatedDelivery || "proximamente";
+    const r = await meta.sendTemplateMessage(phone, templateConSeguimiento, [
+      customerName,
+      orderId,
+      tracking,
+      eta,
+    ]);
+    if (r.ok) return r;
+    console.error("[whatsapp] fallo la plantilla con seguimiento:", r.error);
   }
 
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
-  const client = twilio(accountSid, authToken);
-
-  console.log("Enviando mensaje a:", customerName, order.order_number);
-
-  const whatsappTemplate = process.env.WHATSAPP_TEMPLATE_SID; // Add this to your .env file
-  console.log("whatsappTemplate", whatsappTemplate);
-
-  const message = await client.messages.create({
-    contentSid: whatsappTemplate, // Add this to your .env file
-    contentVariables: JSON.stringify({
-      name: customerName,
-      order_id: String(order.order_number).toUpperCase(),
-    }),
-    to: `whatsapp:${phone}`,
-    from: "whatsapp:+15557634616",
-  });
-  return message;
+  const template =
+    process.env.WHATSAPP_TEMPLATE_NAME ||
+    "mondano_hxd04183bb87ff888c98d7131b5ba50dde";
+  return await meta.sendTemplateMessage(phone, template, [customerName, orderId]);
 }
 
 // Webhook handler
@@ -1196,7 +1200,18 @@ async function resolveOrderById(orderId) {
       });
       mark(`envio: ${shipment ? shipment.status : "null"}`);
       if (shipment) {
-        return { shipment, orderId: shipment.orderId || orderId, reason: "pedido" };
+        // Se trae tambien el contexto de Shopify: da los productos del
+        // pedido (para las tablas de medidas de cada prenda).
+        const ctx = await shopify
+          .getOrderContext(orderId, { signal: controller.signal })
+          .catch(() => null);
+        return {
+          shipment,
+          orderId: shipment.orderId || orderId,
+          reason: "pedido",
+          shopify: ctx,
+          signal: controller.signal,
+        };
       }
 
       // Sin envio en Envia: el pedido puede existir y estar en fabricacion.
@@ -1216,7 +1231,6 @@ async function resolveOrderById(orderId) {
           signal: controller.signal,
         };
       }
-
       mark("verificando en order_tracking...");
       if (await orderExistsInSupabase(orderId)) {
         mark("existe en order_tracking");
@@ -1439,23 +1453,48 @@ async function buildReplyContext(resolved, { text = "", greeting = false, candid
  * @param {object} message Mensaje normalizado.
  * @param {Function} sender Funcion para enviar la respuesta.
  */
+/**
+ * Reune el conocimiento de la tienda para que la IA lo use:
+ * politica de cambios y devoluciones, guia de tallas y las tablas de
+ * medidas de los productos del pedido del cliente.
+ *
+ * Se le pasa TODO al modelo y es el quien decide que responder.
+ *
+ * @param {object} resolved Resultado de resolve*.
+ * @returns {Promise<string>}
+ */
+async function buildStoreKnowledge(resolved) {
+  const [policy, sizeGuide] = await Promise.all([
+    shopify.getPolicyText(),
+    shopify.getSizeGuideText(),
+  ]);
+
+  // Tablas de medidas de los productos del pedido (estan en la descripcion).
+  const productTables = [];
+  const items = resolved.shopify?.lineItems || [];
+  for (const item of items.slice(0, 3)) {
+    const texto = await shopify.getProductSizeTable(item.title);
+    if (texto) productTables.push({ titulo: item.title, texto });
+  }
+
+  return ai.buildKnowledgeContext({ policy, sizeGuide, productTables });
+}
+
+/**
+ * Procesa un mensaje de Instagram. Reusa la logica del agente, pero la
+ * busqueda de pedidos no puede usar el id numerico del usuario de Instagram
+ * como telefono, asi que se identifica al cliente por su numero de pedido
+ * (MON3007) o por lo que dijo antes en la conversacion.
+ *
+ * @param {object} message Mensaje normalizado.
+ * @param {Function} sender Funcion para enviar la respuesta.
+ */
 async function handleInstagramMessage(message, sender) {
   const { text } = message;
   console.log(`[instagram] mensaje: ${text}`);
 
-  // ALCANCE: el bot solo habla si la persona pregunta por un pedido.
-  // Un saludo, un "ok", un emoji o cualquier comentario que no sea del
-  // pedido se queda sin respuesta.
-  const mencionaPedido =
-    Boolean(orders.extractOrderId(text)) || ai.isTrackingIntent(text);
-  const pideHumano = ai.wantsHuman(text);
-
-  if (!mencionaPedido && !pideHumano) {
-    console.log("[instagram] sin respuesta: no pregunta por un pedido");
-    return;
-  }
-
-  if (pideHumano) {
+  // Si pide hablar con una persona, se escala al instante.
+  if (ai.wantsHuman(text)) {
     await sender(
       message.customerId,
       "Te paso con un asesor de Mondano que te va a ayudar. " +
@@ -1476,6 +1515,12 @@ async function handleInstagramMessage(message, sender) {
     greeting: ai.isGreetingOnly(text),
   });
 
+  // Conocimiento de la tienda (politicas, guia de tallas). Se le pasa todo
+  // al modelo y es el quien decide si responde: si la pregunta no es de los
+  // temas que atiende, devuelve NO_RESPUDER y el bot se queda mudo.
+  const knowledge = await buildStoreKnowledge(resolved);
+  if (knowledge) context += "\n\n" + knowledge;
+
   const { ok, reply, error } = await ai.generateReply({ userText: text, context });
   console.log(`[instagram] IA ok=${ok}${error ? " error=" + error : ""}`);
 
@@ -1484,6 +1529,12 @@ async function handleInstagramMessage(message, sender) {
     // mas que Helpful de lo que ayuda. Se queda mudo y se loguea para
     // revisarlo desde los logs de Vercel.
     console.error("[instagram] error de IA (no se responde al cliente):", error);
+    return;
+  }
+
+  // La IA decidio que la pregunta no es de los temas que atiende.
+  if (ai.isNoResponder(reply)) {
+    console.log("[instagram] sin respuesta: la IA decidio no contestar");
     return;
   }
 

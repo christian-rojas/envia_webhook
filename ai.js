@@ -373,7 +373,10 @@ REGLAS ESTRICTAS:
 7. Nunca inventes politicas de la tienda (plazos de envio, costos, formas de pago) que no esten en el contexto.
 8. Cuando el contexto indique que falta un dato para identificar el pedido, pide SOLO el numero de pedido (formato MON3007). Nunca pidas el telefono del cliente ni el email.
 9. Escribe el numero de pedido tal cual, sin guion y sin almohadilla: MON3007. Nunca MON-3007 ni #MON3007.
-10. Si el CONTEXTO incluye NOTAS INTERNAS DEL PEDIDO, mencionalas en el mismo mensaje, junto al estado del envio. Maximo 2 frases extra.
+10. ALCANCE: solo respondes si el mensaje es sobre (a) el pedido del cliente, (b) cambios o devoluciones, (c) tallas o medidas, o (d) la persona pide hablar con un asesor. Si es otra cosa (un saludo, un "ok", un emoji, un comentario que no es del pedido) responde EXACTAMENTE: NO_RESPUDER
+11. Cuando si respondes, empieza con "Hola, gracias por comunicarte con nosotros" y mantén un tono amable y juvenil: cercano, con "tu", frases cortas, nada de lenguaje corporativo.
+12. Cambios y devoluciones: da el paso a paso en una lista numerada y breve, usando solo lo que dice la POLITICA del contexto. No inventes plazos ni condiciones.
+13. Tallas y medidas: usa la GUIA DE TALLAS del contexto. Si no sabes de que prenda habla y no hay tabla de medidas de su pedido, pidele el nombre del producto y dale la guia general.
 
 FORMATO DE RESPUESTA: solo el texto que se envia por WhatsApp. Sin prefijo, sin comillas, sin markdown.`;
 
@@ -503,15 +506,68 @@ async function generateReply({ userText, context, apiKey, model }) {
   return { ok: false, reply: "", error: "x.ai: sin intentos disponibles" };
 }
 
+/**
+ * Arma el bloque de "conocimiento de la tienda" que se le pasa al modelo:
+ * politica de cambios/devoluciones, guia de tallas y tablas de medidas de
+ * los productos del pedido.
+ *
+ * @param {object} params
+ * @param {string} [params.policy] Politica de cambios y devoluciones.
+ * @param {string} [params.sizeGuide] Guia de tallas de la tienda.
+ * @param {object[]} [params.productTables] [{ titulo, texto }]
+ * @returns {string}
+ */
+function buildKnowledgeContext({ policy, sizeGuide, productTables = [] } = {}) {
+  const partes = [];
+
+  if (policy) {
+    partes.push(
+      `POLITICA DE CAMBIOS Y DEVOLUCIONES (de la tienda, version vigente):\n${policy}`
+    );
+  }
+  if (sizeGuide) {
+    partes.push(`GUIA DE TALLAS (de la tienda):\n${sizeGuide}`);
+  }
+  for (const tabla of productTables) {
+    if (tabla && tabla.texto) {
+      partes.push(`TABLA DE MEDIDAS DE ${tabla.titulo}:\n${tabla.texto}`);
+    }
+  }
+
+  if (!partes.length) return "";
+  return partes.join("\n\n");
+}
+
+/**
+ * Detecta si el modelo decidio no responder.
+ *
+ * El modelo responde exactamente "NO_RESPUDER" cuando el mensaje no es de
+ * los temas que debe atender. En ese caso el bot se queda en silencio.
+ *
+ * @param {string} reply Respuesta del modelo.
+ * @returns {boolean}
+ */
+function isNoResponder(reply) {
+  if (!reply) return false;
+  const t = String(reply)
+    .trim()
+    .toUpperCase()
+    .replace(/[\s\-_."'!]/g, "");
+  return t === "NORESPUDER";
+}
+
 module.exports = {
   XAI_MODEL,
   SYSTEM_PROMPT,
   wantsHuman,
   isTrackingIntent,
   isGreetingOnly,
+  isNoResponder,
+  normalizeText,
   saysAlreadyArrived,
   buildShipmentContext,
   buildProcessContext,
+  buildKnowledgeContext,
   buildMissingDataContext,
   buildAlreadyArrivedContext,
   buildPreparedContext,
