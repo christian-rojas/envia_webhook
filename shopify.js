@@ -683,14 +683,31 @@ async function getPages() {
 async function getPolicyText() {
   try {
     const pages = await getPages();
-    const regex = /cambio|devolucion|garantia|reembolso|policy|politica/i;
+    // Solo las paginas que hablan de cambios/devoluciones. Se excluyen
+    // privacidad, terminos y faq (tienen mas texto y ganarian el filtro).
+    const regex = /cambio|devolucion|garantia|reembolso/i;
+    const excluir = /privacidad|privacy|terminos|condiciones|faq|quienes|mayoristas/i;
+
+    // Hay varias paginas que hablan del tema (una es un formulario vacio).
+    // Se queda con la que tiene MAS contenido.
+    let mejor = null;
+    let mejorTexto = "";
     for (const [handle, page] of pages) {
-      if (regex.test(handle) || regex.test(page.title || "")) {
-        const text = htmlToText(page.body);
-        console.log(`[shopify] politica de cambios/devoluciones: ${handle}`);
-        POLITICA_DISPONIBLE = text.length > 0;
-        return text.slice(0, 4000);
+      if (!regex.test(handle) && !regex.test(page.title || "")) continue;
+      if (excluir.test(handle) || excluir.test(page.title || "")) continue;
+      const texto = htmlToText(page.body);
+      if (texto.length > mejorTexto.length) {
+        mejor = handle;
+        mejorTexto = texto;
       }
+    }
+
+    if (mejor) {
+      console.log(
+        `[shopify] politica de cambios/devoluciones: ${mejor} (${mejorTexto.length} chars)`
+      );
+      POLITICA_DISPONIBLE = mejorTexto.length > 0;
+      return mejorTexto.slice(0, 4000);
     }
     console.log("[shopify] no hay pagina de cambios/devoluciones");
   } catch (error) {
@@ -705,22 +722,49 @@ async function getPolicyText() {
  * @returns {Promise<string>}
  */
 async function getSizeGuideText() {
+  const g = await getSizeGuide();
+  return g.texto;
+}
+
+/**
+ * Guia de tallas de la tienda: texto e imagen.
+ *
+ * En este store la tabla de medidas es una IMAGEN dentro de la pagina, asi
+ * que el modelo (que es de texto) no puede leerla. Se le pasa la URL para
+ * que el bot la comparta con el cliente.
+ *
+ * @returns {Promise<{texto: string, imagen: string|null}>}
+ */
+async function getSizeGuide() {
+  const vacio = { texto: "", imagen: null };
   try {
     const pages = await getPages();
     const regex = /talla|size|medida/i;
+    let mejor = null;
+    let mejorLargo = 0;
     for (const [handle, page] of pages) {
-      if (regex.test(handle) || regex.test(page.title || "")) {
-        const text = htmlToText(page.body);
-        console.log(`[shopify] guia de tallas: ${handle} (${text.length} chars)`);
-        GUIA_DISPONIBLE = text.length > 0;
-        return text.slice(0, 4000);
+      if (!regex.test(handle) && !regex.test(page.title || "")) continue;
+      const largo = htmlToText(page.body).length;
+      if (largo >= mejorLargo) {
+        mejor = page;
+        mejorLargo = largo;
       }
     }
-    console.log("[shopify] no hay guia de tallas");
+    if (!mejor) {
+      console.log("[shopify] no hay guia de tallas");
+      return vacio;
+    }
+    const texto = htmlToText(mejor.body);
+    const img = (mejor.body || "").match(/<img[^>]+src="([^"]+)"/i);
+    GUIA_DISPONIBLE = true;
+    console.log(
+      `[shopify] guia de tallas: ${mejor.title} (${texto.length} chars, imagen=${img ? "si" : "no"})`
+    );
+    return { texto: texto.slice(0, 3000), imagen: img ? img[1] : null };
   } catch (error) {
     console.warn("[shopify] no se pudo leer la guia de tallas:", error.message);
+    return vacio;
   }
-  return "";
 }
 
 /**
@@ -733,7 +777,8 @@ async function getSizeGuideText() {
  * @returns {Promise<string>}
  */
 async function getProductSizeTable(titulo) {
-  if (!titulo) return "";
+  const vacio = { texto: "", imagen: null };
+  if (!titulo) return vacio;
   try {
     const query = `query ($title: String!) {
       products(first: 1, query: $title) {
@@ -742,15 +787,33 @@ async function getProductSizeTable(titulo) {
     }`;
     const data = await graphql(query, { title: `title:*${titulo}*` });
     const node = data.products?.nodes?.[0];
-    if (!node?.bodyHtml) return "";
+    if (!node?.bodyHtml) return vacio;
 
-    const text = htmlToText(node.bodyHtml);
-    const idx = text.search(/tabla\s+de\s+medidas/i);
-    if (idx === -1) return "";
-    return text.slice(idx, idx + 1200);
+    const raw = node.bodyHtml;
+    const idx = raw.search(/talla/i);
+    if (idx === -1) return vacio;
+
+    // Zona de la tabla de medidas: desde "Talla:" hasta el siguiente bloque
+    // (cuidado y mantenimiento, o el siguiente encabezado).
+    let zona = raw.slice(idx, idx + 2500);
+
+    // La imagen de la tabla viene justo despues de "Talla:". El texto que
+    // interesa es el que va antes de ella.
+    const img = zona.match(/<img[^>]+src="([^"]+)"/i);
+    const posImg = img ? zona.indexOf(img[0]) : -1;
+    if (posImg > 0) zona = zona.slice(0, posImg);
+
+    const texto = htmlToText(zona)
+      .split(/\n/)
+      .filter((l) => l.trim())
+      .slice(0, 12)
+      .join("\n")
+      .trim();
+
+    return { texto: texto.slice(0, 700), imagen: img ? img[1] : null };
   } catch (error) {
     console.warn("[shopify] no se pudo leer la tabla de medidas:", error.message);
-    return "";
+    return vacio;
   }
 }
 
@@ -780,5 +843,6 @@ module.exports = {
   },
   getPolicyText,
   getSizeGuideText,
+  getSizeGuide,
   getProductSizeTable,
 };

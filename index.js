@@ -702,7 +702,14 @@ app.get("/diag/db", async (req, res) => {
  * si el webhook esta vivo, si las credenciales estan cargadas y cuando
  * llego el ultimo mensaje.
  */
-app.get("/health", (req, res) => {
+app.get("/health", async (req, res) => {
+  // El contenido se carga aqui para que el diagnostico sea cierto de
+  // entrada (las funciones se cachean 30 min).
+  const [policy, guide] = await Promise.all([
+    shopify.getPolicyText(),
+    shopify.getSizeGuide(),
+  ]);
+
   res.status(200).json({
     ok: true,
     uptime_s: Math.round(process.uptime()),
@@ -741,11 +748,11 @@ app.get("/health", (req, res) => {
     contenido: {
       // Requiere los scopes read_content (paginas) y read_products
       // (descripciones con la tabla de medidas de cada prenda).
-      politica_cambios: shopify.POLITICA_DISPONIBLE
-        ? "cargada"
+      politica_cambios: policy
+        ? `cargada (${policy.length} chars)`
         : "sin leer (falta scope read_content en la app de Shopify)",
-      guia_tallas: shopify.GUIA_DISPONIBLE
-        ? "cargada"
+      guia_tallas: guide.imagen
+        ? `cargada (imagen ${guide.imagen.split("/").pop().slice(0, 40)})`
         : "sin leer (falta scope read_content en la app de Shopify)",
     },
   });
@@ -1474,20 +1481,28 @@ async function buildReplyContext(resolved, { text = "", greeting = false, candid
  * @returns {Promise<string>}
  */
 async function buildStoreKnowledge(resolved) {
-  const [policy, sizeGuide] = await Promise.all([
+  const [policy, guide] = await Promise.all([
     shopify.getPolicyText(),
-    shopify.getSizeGuideText(),
+    shopify.getSizeGuide(),
   ]);
 
-  // Tablas de medidas de los productos del pedido (estan en la descripcion).
+  // Tablas de medidas de los productos del pedido (estan en la descripcion,
+  // casi siempre como imagen).
   const productTables = [];
   const items = resolved.shopify?.lineItems || [];
   for (const item of items.slice(0, 3)) {
-    const texto = await shopify.getProductSizeTable(item.title);
-    if (texto) productTables.push({ titulo: item.title, texto });
+    const tabla = await shopify.getProductSizeTable(item.title);
+    if (tabla && (tabla.texto || tabla.imagen)) {
+      productTables.push({ titulo: item.title, ...tabla });
+    }
   }
 
-  return ai.buildKnowledgeContext({ policy, sizeGuide, productTables });
+  return ai.buildKnowledgeContext({
+    policy,
+    sizeGuide: guide.texto,
+    sizeGuideImage: guide.imagen,
+    productTables,
+  });
 }
 
 /**
@@ -1520,7 +1535,7 @@ async function handleInstagramMessage(message, sender) {
       `orderId=${resolved.orderId || "n/d"}`
   );
 
-  const context = await buildReplyContext(resolved, {
+  let context = await buildReplyContext(resolved, {
     text,
     greeting: ai.isGreetingOnly(text),
   });

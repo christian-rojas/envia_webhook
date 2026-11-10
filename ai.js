@@ -376,7 +376,7 @@ REGLAS ESTRICTAS:
 10. ALCANCE: solo respondes si el mensaje es sobre (a) el pedido del cliente, (b) cambios, devoluciones o garantias, (c) tallas o medidas de una prenda, o (d) la persona pide hablar con un asesor. Si es otra cosa (un saludo, un "ok", un emoji, un catalogo, o cualquier comentario que no sea de esos temas) responde EXACTAMENTE: NO_RESPONDER
 11. Cuando si respondes, empieza con "Hola, gracias por comunicarte con nosotros" y mantén un tono amable y juvenil: cercano, con "tu", frases cortas, nada de lenguaje corporativo.
 12. Cambios y devoluciones: da el paso a paso en una lista numerada y breve, usando solo lo que dice la POLITICA del contexto. No inventes plazos ni condiciones. Si la POLITICA no esta en el contexto, pidele el numero de pedido para poder verificar el caso.
-13. Tallas y medidas: si el cliente pregunta que talla le queda, usa la GUIA DE TALLAS del contexto y, si hay, la TABLA DE MEDIDAS de las prendas de su pedido. Si no sabes de que prenda habla, pidele el nombre del producto. Si la guia no esta en el contexto, pidele igualmente el nombre del producto para poder orientarla.
+13. Tallas y medidas: si el cliente pregunta que talla le queda, usa la GUIA DE TALLAS del contexto y, si hay, la TABLA DE MEDIDAS de las prendas de su pedido. Si el contexto trae un link de imagen con la guia o la tabla, COMPARTELO en la respuesta (es un link que el cliente puede abrir). Si no sabes de que prenda habla, pidele el nombre del producto.
 
 FORMATO DE RESPUESTA: solo el texto que se envia por WhatsApp. Sin prefijo, sin comillas, sin markdown.`;
 
@@ -517,7 +517,12 @@ async function generateReply({ userText, context, apiKey, model }) {
  * @param {object[]} [params.productTables] [{ titulo, texto }]
  * @returns {string}
  */
-function buildKnowledgeContext({ policy, sizeGuide, productTables = [] } = {}) {
+function buildKnowledgeContext({
+  policy,
+  sizeGuide,
+  sizeGuideImage,
+  productTables = [],
+} = {}) {
   const partes = [];
 
   if (policy) {
@@ -528,9 +533,20 @@ function buildKnowledgeContext({ policy, sizeGuide, productTables = [] } = {}) {
   if (sizeGuide) {
     partes.push(`GUIA DE TALLAS (de la tienda):\n${sizeGuide}`);
   }
+  if (sizeGuideImage) {
+    partes.push(
+      `IMAGEN con la guia de tallas (link para compartir con el cliente):\n${sizeGuideImage}`
+    );
+  }
   for (const tabla of productTables) {
-    if (tabla && tabla.texto) {
+    if (!tabla) continue;
+    if (tabla.texto) {
       partes.push(`TABLA DE MEDIDAS DE ${tabla.titulo}:\n${tabla.texto}`);
+    }
+    if (tabla.imagen) {
+      partes.push(
+        `IMAGEN con la tabla de medidas de ${tabla.titulo} (link para compartir con el cliente):\n${tabla.imagen}`
+      );
     }
   }
 

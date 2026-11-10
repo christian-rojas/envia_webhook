@@ -219,6 +219,34 @@ Meta solo permite responder con texto libre dentro de las 24 h desde el
 la ventana. Para mensajes proactivos (sin que el cliente escriba antes) hace
 falta una plantilla aprobada.
 
+
+## Alcance de las respuestas (Instagram)
+
+El bot **solo contesta** sobre estos temas; para cualquier otra cosa se queda
+mudo (no responde "hola", ni "ok", ni mensajes sobre el catálogo):
+
+| Tema | Qué responde |
+|---|---|
+| **El pedido** | Estado del envío, fecha estimada, y el proceso de manufactura si el paquete todavía no fue retirado |
+| **Cambios y devoluciones** | El paso a paso de la política real de la tienda (página `politica-de-cambio-y-devoluciones`) |
+| **Tallas y medidas** | La guía de tallas y la tabla de medidas de las prendas del pedido |
+| **Pedir un asesor** | Contacto directo |
+
+Quien decide es el modelo (x.ai), no el código: si el mensaje no es de esos
+temas responde `NO_RESPUDER` y el bot no envía nada. El tono es el de la marca:
+empieza con *"Hola, gracias por comunicarte con nosotros"* y es amable y juvenil.
+
+### De dónde sale la información
+
+| Dato | Origen | Scope de Shopify |
+|---|---|---|
+| Política de cambios y devoluciones | Page `politica-de-cambio-y-devoluciones` | `read_content` |
+| Guía de tallas | Page `guia-de-tallas` (es una **imagen**) | `read_content` |
+| Tabla de medidas por prenda | Descripción del producto (imagen `talla-*.jpg`) | `read_products` |
+
+Las tablas de medidas son imágenes, así que el modelo no puede leerlas: el bot
+comparte el **link** de la imagen para que el cliente la abra.
+
 ## Errores frecuentes
 
 | Error | Causa | Solución |
