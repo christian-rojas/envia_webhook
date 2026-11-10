@@ -614,6 +614,9 @@ function isPreparedOrder(order) {
 
 let pagesCache = null; // Map<handle, {title, body}>
 let pagesCacheAt = 0;
+// Ultimo resultado de la lectura de contenido (para /health).
+let POLITICA_DISPONIBLE = false;
+let GUIA_DISPONIBLE = false;
 const PAGES_TTL_MS = Number(process.env.SHOPIFY_PAGES_TTL_MS || 30 * 60 * 1000);
 
 /**
@@ -685,6 +688,7 @@ async function getPolicyText() {
       if (regex.test(handle) || regex.test(page.title || "")) {
         const text = htmlToText(page.body);
         console.log(`[shopify] politica de cambios/devoluciones: ${handle}`);
+        POLITICA_DISPONIBLE = text.length > 0;
         return text.slice(0, 4000);
       }
     }
@@ -708,6 +712,7 @@ async function getSizeGuideText() {
       if (regex.test(handle) || regex.test(page.title || "")) {
         const text = htmlToText(page.body);
         console.log(`[shopify] guia de tallas: ${handle} (${text.length} chars)`);
+        GUIA_DISPONIBLE = text.length > 0;
         return text.slice(0, 4000);
       }
     }
@@ -767,6 +772,12 @@ module.exports = {
   findOrdersByPhone,
   htmlToText,
   getPages,
+  get POLITICA_DISPONIBLE() {
+    return POLITICA_DISPONIBLE;
+  },
+  get GUIA_DISPONIBLE() {
+    return GUIA_DISPONIBLE;
+  },
   getPolicyText,
   getSizeGuideText,
   getProductSizeTable,

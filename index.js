@@ -738,6 +738,16 @@ app.get("/health", (req, res) => {
       supabase: Boolean(process.env.SUPABASE_URL),
       envia: Boolean(process.env.ENVIA_API_KEY),
     },
+    contenido: {
+      // Requiere los scopes read_content (paginas) y read_products
+      // (descripciones con la tabla de medidas de cada prenda).
+      politica_cambios: shopify.POLITICA_DISPONIBLE
+        ? "cargada"
+        : "sin leer (falta scope read_content en la app de Shopify)",
+      guia_tallas: shopify.GUIA_DISPONIBLE
+        ? "cargada"
+        : "sin leer (falta scope read_content en la app de Shopify)",
+    },
   });
 });
 
