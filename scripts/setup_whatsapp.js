@@ -251,25 +251,57 @@ async function main() {
   const phones2 = await graph(`${wabaId}/phone_numbers`, {
     params: { fields: "id,display_phone_number,code_verification_status,status" },
   });
-  const pendiente = (phones2.body?.data || []).find(
-    (p) => p.code_verification_status !== "VERIFIED"
-  );
 
-  if (!pendiente) {
-    console.log(ok("todos los numeros estan verificados"));
-  } else {
+  // Si la consulta falla (permisos), NO se puede afirmar que este todo
+  // verificado: antes se imprimia "OK" porque la lista venia vacia.
+  if (phones2.body?.error) {
     console.log(
       warn(
-        `${pendiente.display_phone_number} (${pendiente.id}) sin verificar ` +
-          `(${pendiente.code_verification_status}, ${pendiente.status})`
+        `no se pudieron leer los numeros: ${phones2.body.error.message}. ` +
+          `Sin los scopes de WhatsApp el estado de verificacion es desconocido.`
       )
     );
-    console.log(
-      "   Para pedir el codigo por SMS:\n" +
-        `     node scripts/setup_whatsapp.js ${wabaId} ${pendiente.id} --request-code\n` +
-        "   Meta manda un SMS al numero; despues:\n" +
-        `     node scripts/setup_whatsapp.js ${wabaId} ${pendiente.id} --verify-code <CODIGO>`
-    );
+  } else {
+    const todos = phones2.body?.data || [];
+    if (!todos.length) {
+      console.log(warn("el WABA no tiene numeros registrados"));
+    }
+    const pendiente = todos.find((p) => p.code_verification_status !== "VERIFIED");
+    const desconectado = todos.find((p) => p.status !== "CONNECTED");
+
+    for (const p of todos) {
+      console.log(
+        `   ${p.display_phone_number || p.id} | verificacion: ` +
+          `${p.code_verification_status} | estado: ${p.status}`
+      );
+    }
+
+    if (pendiente) {
+      console.log(
+        warn(
+          `${pendiente.display_phone_number} (${pendiente.id}) sin verificar ` +
+            `(${pendiente.code_verification_status}, ${pendiente.status})`
+        )
+      );
+      console.log(
+        "   Para pedir el codigo por SMS:\n" +
+          `     node scripts/setup_whatsapp.js ${wabaId} ${pendiente.id} --request-code\n` +
+          "   Meta manda un SMS al numero; despues:\n" +
+          `     node scripts/setup_whatsapp.js ${wabaId} ${pendiente.id} --verify-code <CODIGO>`
+      );
+    } else {
+      console.log(ok("todos los numeros estan verificados"));
+    }
+
+    if (desconectado) {
+      console.log(
+        warn(
+          `${desconectado.display_phone_number} esta ${desconectado.status}: ` +
+            `no puede recibir ni enviar mensajes hasta conectar el numero ` +
+            `en WhatsApp Manager`
+        )
+      );
+    }
   }
 }
 
