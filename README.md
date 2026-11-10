@@ -137,6 +137,44 @@ node scripts/setup_whatsapp.js <waba_id> <phone_number_id>
 Verifica los scopes, muestra los números del WABA, suscribe la app a los
 eventos y comprueba la suscripción.
 
+**Ojo:** `scripts/setup_whatsapp.js` y `scripts/diagnostico_whatsapp.js` usan el
+token del **system user**, que solo ve lo que la app tenga aprobado. Mientras la
+app no esté publicada, ese token **muestra estados que no son los reales** (por
+ejemplo dio `NOT_VERIFIED` para un número que en realidad estaba registrado). Para
+ver el estado real hay que usar el **MCP de Meta** (ver más abajo).
+
+#### Estado real (confirmado con el MCP de Meta el 2026-11-10)
+
+| Elemento | Estado |
+|---|---|
+| Negocio Mondano | ✅ verificado, perfil completo |
+| App `mondano_mensajes` conectada | ✅ |
+| Número +56 9 2977 3980 | ✅ **registrado y listo para enviar** |
+| Webhook (callback + verify token) | ✅ configurado, 5 campos suscritos |
+| Suscripción de la cuenta | ✅ |
+| **App publicada** | ❌ está en modo desarrollo |
+| **Método de pago** | ❌ sin método de pago (los mensajes con plantilla se aceptan pero **no se entregan**) |
+| **Token del system user** | ❌ falta generarlo |
+
+Los tres pendientes son manuales (links en la sección siguiente).
+
+#### MCP de WhatsApp Business Tools (Meta)
+
+Meta publica un servidor MCP para administrar la cuenta de WhatsApp Business
+(numero, plantillas, webhooks, token del system user). Se usa desde codigo:
+
+```sh
+node scripts/mcp_whatsapp_oauth.js     # OAuth con PKCE -> docs/mcp-whatsapp-token.json
+node scripts/mcp_client.js tools      # lista las tools
+node scripts/mcp_client.js whatsapp_biz_businesses '{"action":"list"}'
+```
+
+El registro dinamico de cliente del servidor **solo lo acepta** desde los
+clientes que Meta soporta (Claude Code, Claude Desktop, ChatGPT, Codex CLI y
+Codex app): con otro `client_name` responde *"Dynamic registration is not
+available for this client"*. El `client_id` no concede nada por si solo: la
+autorizacion real la da el usuario en el consent del navegador.
+
 Requisitos en el panel de Meta:
 
 1. El número registrado en **WhatsApp Manager** (Business → WhatsApp Manager →
@@ -146,6 +184,33 @@ Requisitos en el panel de Meta:
 3. `META_WABA_ID` y `META_PHONE_NUMBER_ID` en Vercel.
 4. Webhook en `https://envia-webhook.vercel.app/webhook/meta` con el mismo
    verify token, suscrito al evento `messages`.
+
+#### Links de los pendientes
+
+| Pendiente | Link |
+|---|---|
+| Publicar la app | `https://developers.facebook.com/apps/2595593107610545/go_live/` |
+| Método de pago | `https://business.facebook.com/billing_hub/accounts/details/?business_id=111337664819723&asset_id=554629607724135&wizard_name=ADD_PM` |
+| Token del system user | `https://business.facebook.com/latest/settings/system_users/?business_id=111337664819723` |
+
+Al generar el token del system user hay que **asignar la app ("Manage app") y la
+cuenta de WhatsApp ("Manage WhatsApp Business accounts") en Full control**, y
+pedir los scopes `business_management`, `whatsapp_business_messaging` y
+`whatsapp_business_management`.
+
+### Aviso de pedido enviado (plantilla)
+
+El aviso al cliente de que su pedido fue recibido sale por la **Cloud API** con
+plantilla (fuera de la ventana de 24h no se puede mandar texto libre):
+
+- `WHATSAPP_TEMPLATE_NAME` → plantilla aprobada. Por defecto
+  `mondano_hxd04183bb87ff888c98d7131b5ba50dde`
+  ("Hola {{1}}, tu pedido #{{2}} fue recibido. ¡Gracias por preferirnos!").
+- `WHATSAPP_TEMPLATE_NAME_TRACKING` → opcional, plantilla con el numero de
+  seguimiento. Se intenta primero y si falla se cae a la simple.
+
+**Los mensajes con plantilla son facturables:** sin metodo de pago en la cuenta,
+Meta los acepta pero el destinatario no los ve.
 
 ### Ventana de 24 horas
 

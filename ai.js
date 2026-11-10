@@ -368,15 +368,15 @@ REGLAS ESTRICTAS:
 2. Si el contexto no contiene la respuesta, NO inventes ni estimes. Di que no tienes esa informacion y que un asesor te ayudara.
 3. Se breve y friendly, como un chat. Usa "tú". Maximo 3 frases.
 4. Si el pedido NO fue encontrado, pide el numero de pedido (formato MON3007) y ofrece pasar con un asesor.
-5. Si el cliente saluda sin pedir informacion: si el CONTEXTO ya identifica un pedido concreto, saluda y dale el estado de ese pedido; si no hay pedido identificado, responde con un saludo corto y preguntale como puedes ayudarle.
+5. Si el cliente saluda sin pedir informacion: si el CONTEXTO ya identifica un pedido concreto, saluda y dale el estado de ese pedido; si no hay pedido identificado, responde NO_RESPONDER.
 6. Nunca prometas fechas que no esten en el contexto.
 7. Nunca inventes politicas de la tienda (plazos de envio, costos, formas de pago) que no esten en el contexto.
 8. Cuando el contexto indique que falta un dato para identificar el pedido, pide SOLO el numero de pedido (formato MON3007). Nunca pidas el telefono del cliente ni el email.
 9. Escribe el numero de pedido tal cual, sin guion y sin almohadilla: MON3007. Nunca MON-3007 ni #MON3007.
-10. ALCANCE: solo respondes si el mensaje es sobre (a) el pedido del cliente, (b) cambios o devoluciones, (c) tallas o medidas, o (d) la persona pide hablar con un asesor. Si es otra cosa (un saludo, un "ok", un emoji, un comentario que no es del pedido) responde EXACTAMENTE: NO_RESPUDER
+10. ALCANCE: solo respondes si el mensaje es sobre (a) el pedido del cliente, (b) cambios, devoluciones o garantias, (c) tallas o medidas de una prenda, o (d) la persona pide hablar con un asesor. Si es otra cosa (un saludo, un "ok", un emoji, un catalogo, o cualquier comentario que no sea de esos temas) responde EXACTAMENTE: NO_RESPONDER
 11. Cuando si respondes, empieza con "Hola, gracias por comunicarte con nosotros" y mantén un tono amable y juvenil: cercano, con "tu", frases cortas, nada de lenguaje corporativo.
 12. Cambios y devoluciones: da el paso a paso en una lista numerada y breve, usando solo lo que dice la POLITICA del contexto. No inventes plazos ni condiciones.
-13. Tallas y medidas: usa la GUIA DE TALLAS del contexto. Si no sabes de que prenda habla y no hay tabla de medidas de su pedido, pidele el nombre del producto y dale la guia general.
+13. Tallas y medidas: si el cliente pregunta que talla le queda, usa la GUIA DE TALLAS del contexto y, si hay, la TABLA DE MEDIDAS de las prendas de su pedido. Si no sabes de que prenda habla, pidele el nombre del producto y dale la guia general.
 
 FORMATO DE RESPUESTA: solo el texto que se envia por WhatsApp. Sin prefijo, sin comillas, sin markdown.`;
 
@@ -553,7 +553,8 @@ function isNoResponder(reply) {
     .trim()
     .toUpperCase()
     .replace(/[\s\-_."'!]/g, "");
-  return t === "NORESPUDER";
+  // Acepta ambas escrituras por si el modelo se equivoca al final.
+  return t === "NORESPONDER" || t === "NORESPUDER";
 }
 
 module.exports = {
