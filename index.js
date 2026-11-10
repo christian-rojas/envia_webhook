@@ -92,7 +92,7 @@ function looksLikeManufacturing(notes) {
  */
 async function getManufacturingNotes(resolved) {
   const orderId = resolved.orderId;
-  const vacio = { notes: "", processDetails: false };
+  const vacio = { notes: "", processDetails: false, prepared: null };
   if (!orderId) return vacio;
 
   // Solo si el envio no fue retirado por la transportista: una vez que el
@@ -105,15 +105,26 @@ async function getManufacturingNotes(resolved) {
       resolved.shopify ||
       (await shopify.getOrderContext(orderId, { signal: resolved.signal }));
 
+    // "Estado de preparacion del pedido" (columna del admin de Shopify).
+    // Va en el contexto para que la IA sepa si el taller ya lo termino.
+    const prepared = ctx.prepared === true;
+    if (prepared) {
+      console.log(`[shopify] pedido ${orderId}: PREPARADO (estado de preparacion)`);
+    }
+
     if (!ctx.found) {
       console.log(
         `[shopify] pedido ${orderId} no encontrado (¿fuera de la ventana de 60 dias?)`
       );
-      return vacio;
+      return { ...vacio, prepared };
     }
     if (!ctx.notes) {
-      console.log(`[shopify] pedido ${orderId} sin notas -> se dice "en confeccion"`);
-      return vacio;
+      console.log(
+        prepared
+          ? `[shopify] pedido ${orderId} sin notas -> se dice "preparado"`
+          : `[shopify] pedido ${orderId} sin notas -> se dice "en confeccion"`
+      );
+      return { ...vacio, prepared };
     }
 
     // Solo interesan las notas de fabricacion y las personalizaciones
@@ -123,9 +134,11 @@ async function getManufacturingNotes(resolved) {
 
     if (!relevantes.length) {
       console.log(
-        `[shopify] pedido ${orderId}: sin notas relevantes -> se dice "en confeccion"`
+        prepared
+          ? `[shopify] pedido ${orderId}: sin notas relevantes -> se dice "preparado"`
+          : `[shopify] pedido ${orderId}: sin notas relevantes -> se dice "en confeccion"`
       );
-      return vacio;
+      return { ...vacio, prepared };
     }
 
     const processDetails = looksLikeManufacturing(relevantes.join(" "));
@@ -134,7 +147,7 @@ async function getManufacturingNotes(resolved) {
         (processDetails ? "DE FABRICACION" : "de personalizacion") +
         ` -> ${JSON.stringify(relevantes)}`
     );
-    return { notes: relevantes.join("\n"), processDetails };
+    return { notes: relevantes.join("\n"), processDetails, prepared };
   } catch (error) {
     // Un fallo de Shopify no debe tumbar la respuesta del bot.
     console.error(`[shopify] error leyendo ${orderId}:`, error.message);
@@ -1406,7 +1419,12 @@ async function buildReplyContext(resolved, { text = "", greeting = false, candid
     orders.isNotPickedUp(resolved.shipment);
 
   if (mostrarProceso) {
-    context += "\n\n" + ai.buildProcessContext(fabNotes.notes, fabNotes);
+    // El "estado de preparacion del pedido" de Shopify manda: si el taller ya
+    // lo termino (preparado) NO se dice que sigue en confeccion, aunque la
+    // transportista todavia no haya retirado el paquete.
+    context += "\n\n" + (fabNotes.prepared
+      ? ai.buildPreparedContext(resolved.shipment)
+      : ai.buildProcessContext(fabNotes.notes, fabNotes));
   }
 
   return context;

@@ -280,6 +280,40 @@ function buildAlreadyArrivedContext({ orderId } = {}) {
 }
 
 /**
+ * Contexto para un pedido que ya esta PREPARADO (tiene etiqueta de envio).
+ *
+ * El estado de preparacion del pedido en Shopify manda sobre el estado de la
+ * transportista: un pedido puede estar "Preparado" y aun asi esperando que la
+ * transportista lo retire. Decirle al cliente que "esta en confeccion" cuando el
+ * taller ya lo termino es justo el error que reporto el_dueno.
+ *
+ * @param {object} [shipment] Envio normalizado (puede ser null).
+ * @returns {string}
+ */
+function buildPreparedContext(shipment) {
+  const lines = [];
+
+  lines.push(
+    `El pedido esta PREPARADO: el taller ya lo termino y ya tiene su ` +
+      `etiqueta de envio.`
+  );
+  if (shipment && shipment.trackingNumber) {
+    lines.push(`Numero de seguimiento: ${shipment.trackingNumber}`);
+  }
+  if (shipment && shipment.carrier) {
+    lines.push(`Transportista: ${shipment.carrier}`);
+  }
+  lines.push(
+    `El pedido esta esperando que la transportista lo retire para entregarlo. ` +
+      `NO digas que esta en confeccion ni que sigue en el taller: ya esta ` +
+      `listo. Comentalo en una frase breve y, si quiere saber mas, ofrece ` +
+      `pasarlo con un asesor.`
+  );
+
+  return lines.join("\n");
+}
+
+/**
  * Contexto con las notas internas del pedido (notas de Shopify).
  *
  * Estas notas son informacion interna del taller. Se le dan al modelo para
@@ -480,5 +514,6 @@ module.exports = {
   buildProcessContext,
   buildMissingDataContext,
   buildAlreadyArrivedContext,
+  buildPreparedContext,
   generateReply,
 };

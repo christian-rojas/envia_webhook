@@ -202,6 +202,8 @@ async function getOrder(orderName, { fresh = false, signal } = {}) {
           name
           createdAt
           note
+          displayFulfillmentStatus
+          fulfillments(first: 10) { id status createdAt }
           metafields(first: 30) { edges { node { namespace key type value } } }
           events(first: 50) {
             edges {
@@ -245,6 +247,10 @@ async function getOrder(orderName, { fresh = false, signal } = {}) {
     name: node.name,
     created_at: node.createdAt,
     note: node.note,
+    fulfillmentStatus: node.displayFulfillmentStatus || null,
+    fulfillments: (node.fulfillments?.edges || [])
+      .map((e) => e.node)
+      .filter(Boolean),
     metafields,
     events,
     line_items: (rest?.line_items || []).length
@@ -379,6 +385,11 @@ async function getOrderContext(orderName, { signal } = {}) {
     properties,
     metafields,
     comments,
+    // "Estado de preparacion del pedido" (columna del admin de Shopify).
+    // Es la fuente de verdad del taller: un pedido puede tener etiqueta de
+    // envio generada y aun asi seguir en el taller, o al reves.
+    fulfillmentStatus: order.fulfillmentStatus || null,
+    prepared: isPreparedOrder(order),
     createdAt: order.created_at,
     lineItems: (order.line_items || []).map((i) => ({
       title: i.title,
@@ -576,6 +587,24 @@ async function findOrdersByPhone(phone, { maxWait = 20000 } = {}) {
   return [];
 }
 
+/**
+ * Dice si el pedido ya esta "Preparado" (columna "estado de preparacion del
+ * pedido" del admin de Shopify).
+ *
+ * Verificado contra el admin: MON4705 y MON4720 muestran "Preparado" y tienen
+ * displayFulfillmentStatus = FULFILLED; MON4706 muestra "No preparado" y tiene
+ * UNFULFILLED. La app de Envia marca el pedido como preparado cuando genera
+ * la etiqueta, asi que "preparado" = ya tiene etiqueta de envio.
+ *
+ * @param {object} order Pedido (GraphQL) normalizado.
+ * @returns {boolean}
+ */
+function isPreparedOrder(order) {
+  if (!order) return false;
+  if (order.fulfillmentStatus === "FULFILLED") return true;
+  return (order.fulfillments || []).length > 0;
+}
+
 module.exports = {
   SHOPIFY_SHOP,
   API_VERSION,
@@ -587,6 +616,7 @@ module.exports = {
   phonesMatch,
   getOrder,
   getOrderContext,
+  isPreparedOrder,
   getGrantedScopes,
   buildPhoneIndex,
   getPhoneIndex,
