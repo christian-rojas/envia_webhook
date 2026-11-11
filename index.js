@@ -13,6 +13,7 @@ const ai = require("./ai.js");
 const orders = require("./orders.js");
 const shopify = require("./shopify.js");
 const conversation = require("./conversation.js");
+const conversations = require("./conversations.js");
 
 // Palabras que delatan que una nota habla del proceso de fabricacion
 // (corte, planchado, ensamblaje...).
@@ -1006,24 +1007,18 @@ async function handleInboundMessage(message, sender = meta.sendTextMessage) {
     return;
   }
 
-  // 1b) ALCANCE: el bot solo habla si la persona pregunta por su pedido
-  //     (un numero de pedido o cuando le llega). Un saludo, un "ok" o
-  //     cualquier otra cosa se queda sin respuesta.
-  //     Excepcion: si en ESTA conversacion ya se esta hablando de un pedido
-  //     (memoria), se responde: es un seguimiento, no una pregunta nueva.
-  const mencionaPedido =
-    Boolean(orders.extractOrderId(text)) || ai.isTrackingIntent(text);
-  const yaHablamosDeUnPedido = Boolean(conversation.get(from)?.orderId);
-
-  if (!mencionaPedido && !yaHablamosDeUnPedido) {
-    console.log("[meta] sin respuesta: no pregunta por un pedido");
-    return;
-  }
+  // 1b) Historial de la conversacion: el pedido que ya dio, lo que ya le
+  //     respondimos y si ya saludamos. Sin esto el bot pide el numero de
+  //     pedido una y otra vez y repite lo mismo.
+  const conv = await readConversationContext(message);
+  if (conv.history) console.log("[meta] historial leido");
 
   // 2) Resolver pedido: por numero de pedido en el texto, por lo que dijo
   //    antes, o por su telefono (que en WhatsApp ya viene en el `from`).
   mark("resolviendo pedido...");
-  const resolved = await resolveWhatsAppOrder(message);
+  const resolved = await resolveWhatsAppOrder(message, {
+    orderIdFromHistory: conv.orderId,
+  });
   mark(
     `resuelto: reason=${resolved.reason} orderId=${resolved.orderId || "n/d"} ` +
       `candidatos=${resolved.candidates ? resolved.candidates.length : 0}`
@@ -1031,11 +1026,22 @@ async function handleInboundMessage(message, sender = meta.sendTextMessage) {
 
   // 3) Armar contexto para la IA.
   mark("armando contexto...");
-  const context = await buildReplyContext(resolved, {
+  let context = await buildReplyContext(resolved, {
     text,
     greeting: ai.isGreetingOnly(text),
     candidates: resolved.candidates || [],
   });
+
+  const products = await buildProductContext(text);
+  if (products) context += "\n\n" + products;
+
+  if (conv.history) {
+    context += "\n\n" + conv.history;
+    if (conv.greeted) {
+      context +=
+        "\n\n(Ya saludamos antes en esta conversacion. NO vuelvas a saludar.)";
+    }
+  }
   mark(`contexto listo (${context.length} chars)`);
 
   // 4) Respuesta de la IA.
@@ -1047,6 +1053,12 @@ async function handleInboundMessage(message, sender = meta.sendTextMessage) {
     // No se avisa al cliente: un "tuve problemas para responder" confunde
     // mas que Helpful de lo que ayuda. Se queda mudo y se loguea.
     console.error("[meta] error de IA (no se responde al cliente):", error);
+    return;
+  }
+
+  // La IA decidio que la pregunta no es de los temas que atiende.
+  if (ai.isNoResponder(reply)) {
+    console.log("[meta] sin respuesta: la IA decidio no contestar");
     return;
   }
 
@@ -1293,12 +1305,13 @@ async function resolveOrderById(orderId) {
  * @param {object} message Mensaje normalizado.
  * @returns {Promise<object>} { shipment, orderId, reason, shopify }
  */
-async function resolveInstagramOrder(message) {
+async function resolveInstagramOrder(message, options = {}) {
   const text = message.text;
   const key = message.customerId;
 
-  // 1) Numero de pedido explicito
-  const orderId = orders.extractOrderId(text);
+  // 1) Numero de pedido explicito. Si no viene en el mensaje, se usa el que
+  //    el cliente ya dio en la conversacion (asi no se le pide de nuevo).
+  const orderId = orders.extractOrderId(text) || options.orderIdFromHistory || null;
   if (orderId) {
     const resolved = await resolveOrderById(orderId);
     if (resolved.shipment || resolved.reason === "pedido_sin_envio") {
@@ -1335,11 +1348,12 @@ async function resolveInstagramOrder(message) {
  * @param {object} message Mensaje normalizado.
  * @returns {Promise<object>} { shipment, orderId, reason, shopify, candidates }
  */
-async function resolveWhatsAppOrder(message) {
+async function resolveWhatsAppOrder(message, options = {}) {
   const { from, text } = message;
 
-  // 1) Numero de pedido explicito
-  const orderId = orders.extractOrderId(text);
+  // 1) Numero de pedido explicito. Si no viene en el mensaje, se usa el que
+  //    el cliente ya dio en la conversacion.
+  const orderId = orders.extractOrderId(text) || options.orderIdFromHistory || null;
   if (orderId) {
     const resolved = await resolveOrderById(orderId);
     if (resolved.shipment || resolved.reason === "pedido_sin_envio") {
@@ -1431,8 +1445,10 @@ async function buildReplyContext(resolved, { text = "", greeting = false, candid
     context =
       `El pedido ${resolved.orderId} EXISTE, pero todavia NO tiene un envio ` +
       `generado: sigue en proceso en el taller. No le digas que no lo ` +
-      `encontramos. Pregunta si ya le informamos el numero de seguimiento y ` +
-      `ofrece pasar con un asesor si es urgente.`;
+      `encontramos. NO le preguntes si le enviamos el numero de seguimiento ` +
+      `ni le digas "estan revisando": si NO hay numero de seguimiento, dile ` +
+      `textualmente "estamos revisando la informacion, nos comunicaremos ` +
+      `contigo en breve" y ofrece pasar con un asesor si es urgente.`;
   } else {
     context = ai.buildMissingDataContext({
       reason: resolved.reason,
@@ -1459,6 +1475,60 @@ async function buildReplyContext(resolved, { text = "", greeting = false, candid
   }
 
   return context;
+}
+
+
+/**
+ * Arma el bloque de informacion de productos cuando el cliente pregunta
+ * por una prenda concreta.
+ *
+ * @param {string} text Mensaje del cliente.
+ * @returns {Promise<string>}
+ */
+async function buildProductContext(text) {
+  const productos = await shopify.searchProducts(text);
+  if (!productos.length) return "";
+
+  const lineas = productos.map((p) => {
+    const partes = [`- ${p.titulo}`];
+    if (p.precio) partes.push(`precio: $${p.precio} CLP`);
+    if (p.tallas && p.tallas.length) partes.push(`tallas: ${p.tallas.join(", ")}`);
+    if (p.imagenTalla) partes.push(`tabla de medidas (imagen): ${p.imagenTalla}`);
+    if (p.tablaMedidas) partes.push(`medidas: ${p.tablaMedidas.replace(/\n/g, " ")}`);
+    partes.push(`link: ${p.link}`);
+    return partes.join(" | ");
+  });
+
+  return (
+    `PRODUCTOS DEL CATALOGO que coinciden con lo que pregunta el cliente ` +
+    `(info de la tienda):\n` + lineas.join("\n")
+  );
+}
+
+/**
+ * Recoge el historial de la conversacion para que el bot entienda el
+ * contexto (el pedido ya dado, lo ya respondido, si ya saludamos...).
+ *
+ * @param {object} message Mensaje normalizado.
+ * @returns {Promise<{history: string, orderId: string|null, greeted: boolean}>}
+ */
+async function readConversationContext(message) {
+  const vacio = { history: "", orderId: null, greeted: false };
+  try {
+    const conv = await conversations.findConversation({
+      senderId: message.customerId,
+      text: message.text,
+    });
+    if (!conv) return vacio;
+    return {
+      history: conversations.formatHistory(conv.messages),
+      orderId: conversations.findOrderIdInHistory(conv.messages),
+      greeted: conversations.alreadyGreeted(conv.messages),
+    };
+  } catch (error) {
+    console.warn("[conversaciones] no se pudo leer el historial:", error.message);
+    return vacio;
+  }
 }
 
 /**
@@ -1529,7 +1599,14 @@ async function handleInstagramMessage(message, sender) {
     return;
   }
 
-  const resolved = await resolveInstagramOrder(message);
+  // Historial: para saber el pedido ya dado, lo ya respondido y si ya
+  // saludamos. Sin esto el bot pide el numero de pedido una y otra vez.
+  const conv = await readConversationContext(message);
+  if (conv.history) console.log("[instagram] historial leido");
+
+  const resolved = await resolveInstagramOrder(message, {
+    orderIdFromHistory: conv.orderId,
+  });
   console.log(
     `[instagram] busqueda: reason=${resolved.reason} ` +
       `orderId=${resolved.orderId || "n/d"}`
@@ -1540,11 +1617,23 @@ async function handleInstagramMessage(message, sender) {
     greeting: ai.isGreetingOnly(text),
   });
 
-  // Conocimiento de la tienda (politicas, guia de tallas). Se le pasa todo
-  // al modelo y es el quien decide si responde: si la pregunta no es de los
-  // temas que atiende, devuelve NO_RESPUDER y el bot se queda mudo.
+  // Conocimiento de la tienda (politicas, guia de tallas) y productos.
+  // Se le pasa todo al modelo y es el quien decide si responde: si la
+  // pregunta no es de los temas que atiende, devuelve NO_RESPONDER y el bot
+  // se queda mudo.
   const knowledge = await buildStoreKnowledge(resolved);
   if (knowledge) context += "\n\n" + knowledge;
+
+  const products = await buildProductContext(text);
+  if (products) context += "\n\n" + products;
+
+  if (conv.history) {
+    context += "\n\n" + conv.history;
+    if (conv.greeted) {
+      context +=
+        "\n\n(Ya saludamos antes en esta conversacion. NO vuelvas a saludar.)";
+    }
+  }
 
   const { ok, reply, error } = await ai.generateReply({ userText: text, context });
   console.log(`[instagram] IA ok=${ok}${error ? " error=" + error : ""}`);

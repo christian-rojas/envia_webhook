@@ -817,6 +817,94 @@ async function getProductSizeTable(titulo) {
   }
 }
 
+
+/**
+ * Palabras vacias que no sirven para buscar un producto.
+ */
+const STOPWORDS = new Set([
+  "hola","gracias","pedido","orden","compra","envio","entrega","cuando","donde",
+  "que","como","quiero","talla","tallas","cambio","devolucion","seguimiento",
+  "numero","ayuda","asesor","holis","buenas","dias","tardes","favor","por",
+  "este","esta","este","todo","nada","algo","mas","pero","porque","tiene",
+  "pueden","puede","hacen","hace","saben","sabe","cual","cuanto","seria",
+  "hola","buenos","dias","estimado","estimada","ciudad","comuna","siguiente",
+]);
+
+/**
+ * Busca productos por nombre en el catalogo.
+ *
+ * Se usa cuando el cliente pregunta por una prenda concreta ("el poleron
+ * azul", "la parka jackdaw"). Se prueban las palabras largas del mensaje
+ * como termino de busqueda.
+ *
+ * @param {string} texto Mensaje del cliente.
+ * @returns {Promise<object[]>} [{ titulo, precio, tallas, link, imagenTalla }]
+ */
+async function searchProducts(texto) {
+  const palabras = String(texto || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length >= 5 && !STOPWORDS.has(w))
+    .slice(0, 3);
+
+  if (!palabras.length) return [];
+
+  const vistos = new Set();
+  const resultados = [];
+
+  for (const palabra of palabras) {
+    try {
+      const data = await graphql(
+        `query ($q: String!) {
+          products(first: 4, query: $q) {
+            nodes {
+              title
+              handle
+              productType
+              featuredImage { url }
+              variants(first: 20) { nodes { title price } }
+            }
+          }
+        }`,
+        { q: `title:*${palabra}*` }
+      );
+
+      for (const node of data.products?.nodes || []) {
+        if (vistos.has(node.title)) continue;
+        vistos.add(node.title);
+
+        const tallas = (node.variants?.nodes || [])
+          .map((v) => (v.title || "").split(" / ")[0])
+          .filter((t) => t && t.toLowerCase() !== "default title")
+          .filter((t, i, arr) => arr.indexOf(t) === i);
+
+        const precio = node.variants?.nodes?.[0]?.price;
+
+        resultados.push({
+          titulo: node.title,
+          tipo: node.productType || null,
+          precio: precio ? Math.round(Number(precio) / 100) : null,
+          tallas,
+          link: `https://mondano.cl/products/${node.handle}`,
+          imagen: node.featuredImage?.url || null,
+        });
+
+        // La tabla de medidas va en la descripcion.
+        const tabla = await getProductSizeTable(node.title);
+        if (tabla.imagen) resultados[resultados.length - 1].imagenTalla = tabla.imagen;
+        if (tabla.texto) resultados[resultados.length - 1].tablaMedidas = tabla.texto;
+      }
+    } catch (error) {
+      console.warn("[shopify] busqueda de productos fallo:", error.message);
+    }
+  }
+
+  console.log(`[shopify] productos encontrados: ${resultados.length}`);
+  return resultados.slice(0, 4);
+}
+
 module.exports = {
   SHOPIFY_SHOP,
   API_VERSION,
@@ -845,4 +933,5 @@ module.exports = {
   getSizeGuideText,
   getSizeGuide,
   getProductSizeTable,
+  searchProducts,
 };
