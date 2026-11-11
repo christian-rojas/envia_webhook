@@ -14,6 +14,7 @@ const orders = require("./orders.js");
 const shopify = require("./shopify.js");
 const conversation = require("./conversation.js");
 const conversations = require("./conversations.js");
+const features = require("./features.js");
 
 // Palabras que delatan que una nota habla del proceso de fabricacion
 // (corte, planchado, ensamblaje...).
@@ -746,6 +747,7 @@ app.get("/health", async (req, res) => {
       supabase: Boolean(process.env.SUPABASE_URL),
       envia: Boolean(process.env.ENVIA_API_KEY),
     },
+    features: features.describe(),
     contenido: {
       // Requiere los scopes read_content (paginas) y read_products
       // (descripciones con la tabla de medidas de cada prenda).
@@ -980,6 +982,13 @@ app.post("/webhook/meta", async (req, res) => {
     return res.status(401).send("Invalid signature");
   }
 
+  // WhatsApp apagado: se responde 200 para que Meta no reintente, pero no
+  // se procesa nada.
+  if (!features.isEnabled("whatsapp")) {
+    console.log("[meta] WhatsApp esta apagado (FEATURE_WHATSAPP=0): no se procesa");
+    return res.status(200).send("EVENT_RECEIVED");
+  }
+
   await processMetaWebhook(req, res, "whatsapp");
 });
 
@@ -1112,10 +1121,19 @@ app.post("/webhook/instagram", async (req, res) => {
     return res.status(401).send("Invalid signature");
   }
 
+  if (!features.isEnabled("instagram")) {
+    console.log("[instagram] Instagram esta apagado (FEATURE_INSTAGRAM=0)");
+    return res.status(200).send("EVENT_RECEIVED");
+  }
+
   // Meta puede mandar el payload de WhatsApp a esta misma URL si la
   // suscripcion de la app quedo apuntando aqui. Se detecta por la forma
   // del payload y se enruta al handler que corresponde.
   if (isWhatsAppPayload(req.body)) {
+    if (!features.isEnabled("whatsapp")) {
+      console.log("[instagram] payload de WhatsApp pero WhatsApp esta apagado");
+      return res.status(200).send("EVENT_RECEIVED");
+    }
     console.log("[instagram] payload de WhatsApp detectado -> /webhook/meta");
     return processMetaWebhook(req, res, "whatsapp");
   }
@@ -1486,6 +1504,7 @@ async function buildReplyContext(resolved, { text = "", greeting = false, candid
  * @returns {Promise<string>}
  */
 async function buildProductContext(text) {
+  if (!features.isEnabled("productInfo")) return "";
   const productos = await shopify.searchProducts(text);
   if (!productos.length) return "";
 
@@ -1514,6 +1533,7 @@ async function buildProductContext(text) {
  */
 async function readConversationContext(message) {
   const vacio = { history: "", orderId: null, greeted: false };
+  if (!features.isEnabled("conversationHistory")) return vacio;
   try {
     const conv = await conversations.findConversation({
       senderId: message.customerId,
@@ -1551,6 +1571,7 @@ async function readConversationContext(message) {
  * @returns {Promise<string>}
  */
 async function buildStoreKnowledge(resolved) {
+  if (!features.isEnabled("storePolicies")) return "";
   const [policy, guide] = await Promise.all([
     shopify.getPolicyText(),
     shopify.getSizeGuide(),
