@@ -25,6 +25,20 @@ App: `2595593107610545` (mondano_mensajes)
 Número: `530005643535929` = +56 9 2977 3980, `onboarding_state: registered`
 WABA: `554629607724135`
 
+## Callback URLs (verificado por API)
+
+Cada caso de uso tiene SU PROPIA callback URL. Cambiar una no afecta a la otra.
+
+```
+object: instagram                    -> /webhook/instagram
+  campos: messages, messaging_postbacks, messaging_seen, message_reactions, messaging_referral
+object: whatsapp_business_account    -> /webhook/meta
+  campos: account_update, message_statuses, message_template_status_update,
+          messages, phone_number_name_update
+```
+
+Para revisarlo: `node scripts/ver_webhooks.js`
+
 ## Los dos pasos que faltan
 
 ### 1. Publicar la app (bloquea los webhooks reales)
