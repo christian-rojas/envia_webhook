@@ -9,3 +9,4 @@ twillio.js
 .vercel
 .env*
 mcp-whatsapp-token.json
+meta-oauth-token.json
