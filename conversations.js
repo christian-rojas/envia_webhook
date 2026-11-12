@@ -5,34 +5,58 @@
  *
  *   GET /{ig-user-id}/conversations
  *       ?platform=instagram
- *       &fields=id,messages{message,from{id,username},created_time}
+ *       &fields=id,participants{id,username}
  *
  * Sirve para que el bot entienda el contexto: que NO vuelva a pedir el
  * numero de pedido si ya se lo dieron, que no salude tres veces, y que no
  * repita lo que ya respondio.
  *
- * OJO con dos limites de la API:
- *   - El maximo de `limit` es 25 (con 50 devuelve 0 conversaciones).
- *   - `platform` se ignora: devuelve Instagram y WhatsApp mezclados. Los
- *     participantes de WhatsApp aparecen con su usuario de Instagram (cuando
- *     lo tienen vinculado).
+ * TRES LIMITES QUE IMPORTAN (aprendidos a la fuerza):
+ *   1. El maximo de `limit` es 25 (con 50 devuelve 0 conversaciones).
+ *   2. Pedir `messages` de las 25 conversaciones de una vez falla con
+ *      "Please reduce the amount of data you're asking for". Por eso se
+ *      pide una lista LIGERA (id + participantes) y despues el detalle de
+ *      UN solo hilo.
+ *   3. El campo de texto es `message`, no `text`.
+ *
+ * En Instagram el remitente se identifica por su id de Instagram, que
+ * coincide EXACTO con el participante del hilo. En WhatsApp el remitente es
+ * un telefono y Meta expone al cliente por su identidad de Instagram, asi
+ * que ahi se busca por el texto del mensaje o por el pedido que ya dio.
  */
 
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION || "v27.0";
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
 
+// En local carga el .env; en Vercel no hace nada (no hay archivo .env).
+try {
+  require("dotenv").config();
+} catch {
+  /* dotenv es opcional */
+}
+
 /** Nuestra propia cuenta (el bot). */
 const OUR_ID = process.env.META_INSTAGRAM_ACCOUNT_ID || "17841408417156397";
 const OUR_USERNAME = process.env.META_INSTAGRAM_USERNAME || "mondano.cl";
 
-/** Cuanto tiempo se cachea la lista de conversaciones. */
+/** Cuanto tiempo se cachea la lista de hilos. */
 const CACHE_MS = Number(process.env.CONVOS_CACHE_MS || 60000);
 
 /** Quantos mensajes de historico se le pasan al modelo. */
 const HISTORY_MESSAGES = Number(process.env.CONVOS_HISTORY_MSGS || 16);
 
-let cache = null; // { at, conversations }
-let cacheInFlight = null;
+/** Cuantos hilos se revisan en detalle como maximo (para no gastar cuota). */
+const MAX_HILOS_DETALLE = Number(process.env.CONVOS_MAX_HILOS || 12);
+
+/**
+ * TTL del detalle de los hilos. Instagram limita a 200 llamadas por hora y
+ * por cuenta, asi que el detalle se cachea bastante tiempo: son 12 llamadas
+ * cada 15 min (48 por hora).
+ */
+const DETALLE_TTL_MS = Number(process.env.CONVOS_DETALLE_TTL_MS || 15 * 60 * 1000);
+
+let listaCache = null; // { at, conversaciones }
+let detalleCache = null; // { at, porId: Map<id, mensajes> }
 
 /**
  * Llama a la Graph API de Meta.
@@ -52,7 +76,7 @@ async function graphFetch(path, params = {}) {
   );
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
+  const timer = setTimeout(() => controller.abort(), 20000);
   try {
     const response = await fetch(url, { signal: controller.signal });
     const data = await response.json().catch(() => ({}));
@@ -68,112 +92,111 @@ async function graphFetch(path, params = {}) {
 }
 
 /**
- * Trae las conversaciones recientes (con cache).
+ * Lista los hilos (ligero: id + participantes).
  *
- * @param {object} [options] { fresh } ignora la cache.
- * @returns {Promise<Array>} Lista de conversaciones con sus mensajes.
+ * @param {object} [options] { fresh }
+ * @returns {Promise<object[]>}
  */
 async function listConversations({ fresh = false } = {}) {
-  if (!fresh && cache && Date.now() - cache.at < CACHE_MS) {
-    return cache.conversations;
+  if (!fresh && listaCache && Date.now() - listaCache.at < CACHE_MS) {
+    return listaCache.conversaciones;
   }
 
-  if (cacheInFlight) {
-    await cacheInFlight;
-    if (!fresh && cache) return cache.conversations;
-  }
-
-  cacheInFlight = (async () => {
-    const data = await graphFetch(`${OUR_ID}/conversations`, {
-      platform: "instagram",
-      fields: "id,messages{message,from{id,username},created_time}",
-      limit: 25,
-    });
-    const conversations = data.data || [];
-    cache = { at: Date.now(), conversations };
-    console.log(`[conversaciones] ${conversations.length} conversaciones`);
-  })().finally(() => {
-    cacheInFlight = null;
+  const data = await graphFetch(`${OUR_ID}/conversations`, {
+    platform: "instagram",
+    fields: "id,participants{id,username}",
+    limit: 25,
   });
 
-  await cacheInFlight;
-  return cache ? cache.conversations : [];
+  const conversaciones = data.data || [];
+  listaCache = { at: Date.now(), conversaciones };
+  console.log(`[conversaciones] ${conversaciones.length} hilos`);
+  return conversaciones;
+}
+
+/**
+ * Trae los mensajes de UN hilo.
+ *
+ * @param {string} conversationId Id del hilo.
+ * @returns {Promise<object[]>} Mensajes.
+ */
+async function getThreadMessages(conversationId) {
+  if (!conversationId) return [];
+
+  if (detalleCache && Date.now() - detalleCache.at < DETALLE_TTL_MS) {
+    const guardado = detalleCache.porId.get(conversationId);
+    if (guardado) return guardado;
+  }
+
+  const data = await graphFetch(conversationId, {
+    fields: "id,messages{message,from{id,username},created_time}",
+  });
+
+  const mensajes = data.messages?.data || [];
+  if (!detalleCache) detalleCache = { at: Date.now(), porId: new Map() };
+  detalleCache.porId.set(conversationId, mensajes);
+  detalleCache.at = Date.now();
+  return mensajes;
 }
 
 /**
  * Busca la conversacion de un cliente.
  *
- * Hay tres formas de identificarla, en este orden:
- *   1) Por el id de Instagram del remitente (exacto, canal Instagram).
- *   2) Por el texto exacto del mensaje que acaba de llegar (funciona en
- *      WhatsApp, donde el id de la Graph API no es el telefono).
- *   3) Por un numero de pedido que el cliente ya haya dado en la conversacion.
- *
  * @param {object} params
  * @param {string} [params.senderId] IGSID del remitente (Instagram).
  * @param {string} [params.text] Texto del mensaje actual.
  * @param {string} [params.orderId] Numero de pedido ya conocido.
- * @returns {Promise<object|null>} { id, messages } o null.
+ * @returns {Promise<object|null>} { id, messages }
  */
 async function findConversation({ senderId, text, orderId } = {}) {
-  let conversations = await listConversations();
+  const hilos = await listConversations();
 
-  let found = matchConversation(conversations, { senderId, text, orderId });
-
-  // El mensaje actual puede no estar todavia en la cache: se refresca una vez.
-  if (!found && text) {
-    conversations = await listConversations({ fresh: true });
-    found = matchConversation(conversations, { senderId, text, orderId });
-  }
-
-  if (!found) return null;
-
-  const messages = [...(found.messages || [])].sort(
-    (a, b) => String(a.created_time).localeCompare(String(b.created_time))
-  );
-
-  return { id: found.id, messages };
-}
-
-/**
- * Busca el hilo que corresponde a un cliente dentro de las conversaciones.
- *
- * @param {Array} conversations Conversaciones.
- * @param {object} params { senderId, text, orderId }
- * @returns {object|null}
- */
-function matchConversation(conversations, { senderId, text, orderId } = {}) {
-  // 1) Id exacto de Instagram.
+  // 1) Instagram: el id del remitente es EXACTO el participante del hilo.
   if (senderId) {
-    for (const conv of conversations) {
-      const esCliente = (conv.messages?.data || []).some(
-        (m) => String(m.from?.id || "") === String(senderId)
-      );
-      if (esCliente) return conv;
+    const hilo = hilos.find((h) =>
+      (h.participants?.data || []).some(
+        (p) => String(p.id) === String(senderId)
+      )
+    );
+    if (hilo) {
+      const messages = await getThreadMessages(hilo.id);
+      return { id: hilo.id, messages };
     }
   }
 
   const texto = (text || "").trim();
   const pedido = (orderId || "").trim();
+  if (!texto && !pedido) return null;
 
-  // 2) Texto exacto del mensaje actual.
-  if (texto.length >= 6) {
-    for (const conv of conversations) {
-      const hit = (conv.messages?.data || []).some(
+  // 2) WhatsApp: el remitente es un telefono y Meta lo expone por su
+  // identidad de Instagram. Se buscan los hilos revisando el detalle de
+  // algunos (con tope, para no gastar cuota: el limite de Instagram es de
+  // 200 llamadas por hora y por cuenta).
+  const candidatos = hilos.slice(0, MAX_HILOS_DETALLE);
+  const detalles = await Promise.all(
+    candidatos.map((h) =>
+      getThreadMessages(h.id).catch(() => [])
+    )
+  );
+
+  for (let i = 0; i < candidatos.length; i++) {
+    const mensajes = detalles[i];
+    if (!mensajes.length) continue;
+
+    if (texto.length >= 6) {
+      const hit = mensajes.some(
         (m) => String(m.message || "").trim() === texto
       );
-      if (hit) return conv;
+      if (hit) return { id: candidatos[i].id, messages: mensajes };
     }
-  }
 
-  // 3) Numero de pedido que el cliente ya dio en el hilo.
-  if (pedido) {
-    const re = new RegExp(pedido.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-    for (const conv of conversations) {
-      const hit = (conv.messages?.data || []).some((m) =>
-        re.test(String(m.message || ""))
+    if (pedido) {
+      const re = new RegExp(
+        pedido.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+        "i"
       );
-      if (hit) return conv;
+      const hit = mensajes.some((m) => re.test(String(m.message || "")));
+      if (hit) return { id: candidatos[i].id, messages: mensajes };
     }
   }
 
@@ -238,10 +261,11 @@ module.exports = {
   OUR_ID,
   OUR_USERNAME,
   HISTORY_MESSAGES,
+  MAX_HILOS_DETALLE,
   graphFetch,
   listConversations,
+  getThreadMessages,
   findConversation,
-  matchConversation,
   formatHistory,
   findOrderIdInHistory,
   alreadyGreeted,

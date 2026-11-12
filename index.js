@@ -647,6 +647,59 @@ app.get("/diag/wa", async (req, res) => {
 });
 
 /**
+ * GET /diag/prompt
+ * Muestra el prompt activo (reglas) para verificar que el deploy lleva la
+ * version buena del prompt.
+ */
+app.get("/diag/prompt", (req, res) => {
+  const reglas = String(ai.SYSTEM_PROMPT || "")
+    .split("\n")
+    .filter((l) => /^\d+\./.test(l.trim()));
+  res.status(200).json({ reglas });
+});
+
+/**
+ * GET /diag/ctx?text=...&senderId=...
+ * Arma el contexto tal cual lo arma el handler y devuelve la respuesta de
+ * la IA. Sirve para ver por que decide no contestar.
+ */
+app.get("/diag/ctx", async (req, res) => {
+  const text = String(req.query.text || "hola, cuanto cuesta el poleron azul?");
+  const senderId = String(req.query.senderId || "2746101999184243");
+  const mensaje = { text, customerId: senderId, igUserId: "17841408417156397" };
+
+  const conv = await readConversationContext(mensaje);
+  const resolved = await resolveInstagramOrder(mensaje, {
+    orderIdFromHistory: conv.orderId,
+  });
+  let context = await buildReplyContext(resolved, {
+    text,
+    greeting: ai.isGreetingOnly(text),
+  });
+  const knowledge = await buildStoreKnowledge(resolved);
+  if (knowledge) context += "\n\n" + knowledge;
+  const products = await buildProductContext(text);
+  if (products) context += "\n\n" + products;
+  if (conv.history) {
+    context += "\n\n" + conv.history;
+    if (conv.greeted) {
+      context +=
+        "\n\n(Ya saludamos antes en esta conversacion. NO vuelvas a saludar.)";
+    }
+  }
+
+  const r = await ai.generateReply({ userText: text, context });
+  res.status(200).json({
+    longitud: context.length,
+    greeting: ai.isGreetingOnly(text),
+    hist: conv.history ? conv.history.length : 0,
+    productos: products ? products.length : 0,
+    respuesta: r.ok ? r.reply : "ERROR " + r.error,
+    contexto: context,
+  });
+});
+
+/**
  * GET /diag/db
  * Diagnostico de la conexion a Supabase: compara el cliente de supabase-js
  * con un fetch crudo a la REST API. Sirve para distinguir un problema de
@@ -1721,6 +1774,8 @@ module.exports.handleInboundMessage = handleInboundMessage;
 module.exports.resolveInstagramOrder = resolveInstagramOrder;
 module.exports.resolveWhatsAppOrder = resolveWhatsAppOrder;
 module.exports.buildReplyContext = buildReplyContext;
+module.exports.buildStoreKnowledge = buildStoreKnowledge;
+module.exports.buildProductContext = buildProductContext;
 module.exports.filterRelevantNotes = filterRelevantNotes;
 module.exports.isRelevantNote = isRelevantNote;
 module.exports.looksLikeManufacturing = looksLikeManufacturing;

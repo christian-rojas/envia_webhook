@@ -3,14 +3,15 @@
  *
  * La bandeja tiene tres carpetas: Primary (seguidores), General (despues de
  * que la cuenta responde) y Requests (los que no siguen a la cuenta).
+ * Meta no expone un endpoint por carpeta: `/{ig-user-id}/messages` solo
+ * existe en el login de Instagram, no en el de Facebook. La conexion
+ * `/{ig-user-id}/conversations` trae TODAS las carpetas, asi que el
+ * detector de "sin responder" se hace sobre los hilos.
  *
- * El webhook entrega los mensajes de todas las carpetas, pero Meta deja
- * cosas afuera: "los mensajes en Requests que llevan 30 dias sin actividad no
- * se devuelven en las llamadas a la API" y un mensaje no se marca como leido
- * hasta que se responde.
- *
- * Este lector es una red de seguridad: revisa la bandeja y responde lo que
- * haya quedado sin contestar. Se puede llamar desde un cron.
+ * Reglas de Meta que importan:
+ *   - Un mensaje no se marca como leido hasta que se responde.
+ *   - Los mensajes de Requests con mas de 30 dias sin actividad no se
+ *     devuelven en las llamadas a la API.
  */
 
 const conversations = require("./conversations.js");
@@ -18,76 +19,77 @@ const conversations = require("./conversations.js");
 /** Cuanto tiempo se cachea la bandeja. */
 const BANDEJA_CACHE_MS = Number(process.env.BANDEJA_CACHE_MS || 60000);
 
-/** Quantos mensajes mira por pasada. */
-const BANDEJA_LIMIT = Number(process.env.BANDEJA_LIMIT || 25);
+/**
+ * Instagram solo deja responder dentro de las 24 h desde el ultimo mensaje
+ * del cliente (error 2534022 / #10 fuera de la ventana). No tiene sentido
+ * intentar con mensajes viejos: fallan y ensucian el log.
+ */
+const MAX_EDAD_HORAS = Number(process.env.BANDEJA_MAX_HORAS || 23);
 
 let cache = null;
 
 /**
- * Trae los mensajes recientes de la bandeja.
+ * Trae los hilos recientes de la bandeja.
  *
  * @param {object} [options] { fresh }
- * @returns {Promise<object[]>} Mensajes normalizados.
+ * @returns {Promise<object[]>} Conversaciones.
  */
 async function listInboxMessages({ fresh = false } = {}) {
   if (!fresh && cache && Date.now() - cache.at < BANDEJA_CACHE_MS) {
-    return cache.messages;
+    return cache.conversations;
   }
-
-  const data = await conversations.graphFetch(
-    `${conversations.OUR_ID}/messages`,
-    {
-      fields: "id,from{id,username},message,created_time,is_echo",
-      limit: BANDEJA_LIMIT,
-    }
-  );
-
-  const mensajes = (data.data || []).map((m) => ({
-    id: m.id,
-    from: m.from || {},
-    texto: String(m.message || "").trim(),
-    createdTime: m.created_time || null,
-    esNuestro: String(m.from?.id || "") === String(conversations.OUR_ID),
-    esEco: Boolean(m.is_echo),
-  }));
-
-  cache = { at: Date.now(), messages: mensajes };
-  console.log(`[bandeja] ${mensajes.length} mensajes`);
-  return mensajes;
+  const hilos = await conversations.listConversations({ fresh });
+  cache = { at: Date.now(), conversations: hilos };
+  return hilos;
 }
 
 /**
- * Devuelve los mensajes de clientes que NO tienen una respuesta nuestra
- * despues.
+ * Devuelve los mensajes de clientes a los que NO se les ha contestado.
+ *
+ * Se mira el ultimo mensaje de cada hilo: si es del cliente (no nuestro) y
+ * tiene texto, es una mensagem sin responder.
  *
  * @param {object} [options] { fresh }
- * @returns {Promise<object[]>}
+ * @returns {Promise<object[]>} [{ conversationId, mensaje }]
  */
 async function findUnanswered({ fresh = false } = {}) {
-  const mensajes = await listInboxMessages({ fresh });
-  const ultimoNuestro = new Map();
+  const hilos = await listInboxMessages({ fresh });
+  const pendientes = [];
 
-  for (const m of mensajes) {
-    if (m.esNuestro) {
-      const clave = m.from?.id;
-      if (clave) ultimoNuestro.set(clave, m.createdTime);
-    }
-  }
+  for (const hilo of hilos) {
+    const mensajes = [...(hilo.messages?.data || [])].sort((a, b) =>
+      String(a.created_time).localeCompare(String(b.created_time))
+    );
+    if (!mensajes.length) continue;
 
-  const sinResponder = [];
-  for (const m of mensajes) {
-    if (m.esNuestro || m.esEco || !m.texto) continue;
-    const clave = m.from?.id;
-    if (!clave) continue;
-    const nuestra = ultimoNuestro.get(clave);
-    if (!nuestra || String(m.createdTime) > String(nuestra)) {
-      sinResponder.push(m);
-    }
+    const ultimo = mensajes[mensajes.length - 1];
+    // Si el ultimo mensaje es nuestro, ya respondimos.
+    if (String(ultimo.from?.id || "") === String(conversations.OUR_ID)) continue;
+    const texto = String(ultimo.message || "").trim();
+    if (!texto) continue;
+
+    // Solo si es reciente (dentro de la ventana de 24 h de Instagram).
+    const edad = Date.now() - Date.parse(ultimo.created_time || 0);
+    if (!Number.isFinite(edad) || edad > MAX_EDAD_HORAS * 3600 * 1000) continue;
+
+    pendientes.push({
+      conversationId: hilo.id,
+      mensaje: {
+        id: ultimo.id,
+        from: ultimo.from || {},
+        texto,
+        createdTime: ultimo.created_time || null,
+        esNuestro: false,
+        esEco: false,
+      },
+    });
   }
 
   // Del mas reciente al mas antiguo.
-  sinResponder.sort((a, b) => String(b.createdTime).localeCompare(String(a.createdTime)));
-  return sinResponder;
+  pendientes.sort((a, b) =>
+    String(b.mensaje.createdTime).localeCompare(String(a.mensaje.createdTime))
+  );
+  return pendientes;
 }
 
 /**
@@ -110,8 +112,9 @@ function toInboundMessage(mensaje) {
 }
 
 module.exports = {
+  MAX_EDAD_HORAS,
   listInboxMessages,
   findUnanswered,
   toInboundMessage,
-  BANDEJA_LIMIT,
+  BANDEJA_CACHE_MS,
 };

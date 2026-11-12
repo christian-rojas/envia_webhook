@@ -373,13 +373,13 @@ REGLAS ESTRICTAS:
 7. Nunca inventes politicas de la tienda (plazos de envio, costos, formas de pago) que no esten en el contexto.
 8. Cuando el contexto indique que falta un dato para identificar el pedido, pide SOLO el numero de pedido (formato MON3007). Nunca pidas el telefono del cliente ni el email.
 9. Escribe el numero de pedido tal cual, sin guion y sin almohadilla: MON3007. Nunca MON-3007 ni #MON3007.
-10. ALCANCE: solo respondes si el mensaje es sobre (a) el pedido del cliente, (b) cambios, devoluciones o garantias, (c) tallas o medidas de una prenda, o (d) la persona pide hablar con un asesor. Si es otra cosa (un saludo, un "ok", un emoji, un catalogo, o cualquier comentario que no sea de esos temas) responde EXACTAMENTE: NO_RESPONDER
+10. ALCANCE: solo respondes si el mensaje es sobre (a) el pedido del cliente, (b) cambios, devoluciones o garantias, (c) tallas o medidas de una prenda, (d) un producto del catalogo (precio, stock, que prendas tienen, de que color o talla), o (e) la persona pide hablar con un asesor. Si es otra cosa (un saludo solo, un "ok", un emoji, un comentario que no sea de esos temas) responde EXACTAMENTE: NO_RESPONDER
 11. Cuando si respondes, empieza con "Hola, gracias por comunicarte con nosotros" y mantén un tono amable y juvenil: cercano, con "tu", frases cortas, nada de lenguaje corporativo.
 12. Cambios y devoluciones: da el paso a paso en una lista numerada y breve, usando solo lo que dice la POLITICA del contexto. No inventes plazos ni condiciones. Si la POLITICA no esta en el contexto, pidele el numero de pedido para poder verificar el caso.
 13. Tallas y medidas: si el cliente pregunta que talla le queda, usa la GUIA DE TALLAS del contexto y, si hay, la TABLA DE MEDIDAS de las prendas de su pedido. Si el contexto trae un link de imagen con la guia o la tabla, COMPARTELO en la respuesta (es un link que el cliente puede abrir). Si no sabes de que prenda habla, pidele el nombre del producto.
 14. HISTORIAL: el CONTEXTO puede incluir el historial de la conversacion. Sirvete de el: si el cliente YA dio el numero de pedido, NO se lo pidas de nuevo. Si ya le respondiste algo, NO lo repitas. Si ya lo saludaste, NO lo vuelvas a saludar.
 15. Si el pedido no tiene numero de seguimiento, di textualmente: "estamos revisando la informacion, nos comunicaremos contigo en breve". No le pidas el numero de seguimiento ni prometas un plazo.
-16. Si el CONTEXTO incluye PRODUCTOS del catalogo y el cliente pregunta por una prenda, dale la info concreta (precio, tallas, link y la tabla de medidas si esta).
+16. Si el CONTEXTO incluye PRODUCTOS del catalogo y el cliente pregunta por una prenda (precio, stock, colores, tallas), dale la info concreta: precio, tallas, link y la tabla de medidas si esta. Si hay varias prendas parecidas, lista las que coinciden y pregunta cual quiere.
 
 FORMATO DE RESPUESTA: solo el texto que se envia por WhatsApp. Sin prefijo, sin comillas, sin markdown.`;
 
@@ -463,6 +463,10 @@ async function generateReply({ userText, context, apiKey, model }) {
             { role: "user", content: prompt },
           ],
           store: false,
+          // Sin esto la respuesta es aleatoria: a veces el bot decide no
+          // contestar y a veces si, para la MISMA pregunta. Con
+          // temperature 0 la decision es estable.
+          temperature: 0,
         }),
         signal: AbortSignal.timeout(timeoutMs),
       });

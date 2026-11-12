@@ -1016,12 +1016,22 @@ async function searchProducts(texto) {
 
   if (!palabras.length) return [];
 
+  // Plurales: el tipo del catalogo es "Chaqueta" y el cliente escribe
+  // "chaquetas". Se prueba tambien en singular.
+  const variantes = new Set();
+  for (const palabra of palabras) {
+    variantes.add(palabra);
+    if (/[^s]s$/.test(palabra)) variantes.add(palabra.slice(0, -1));
+    if (/e$/.test(palabra)) variantes.add(palabra + "s");
+  }
+  const terminos = [...variantes];
+
   const catalogo = await getCatalogIndex();
   const encontrados = [];
 
   for (const producto of catalogo) {
     const objetivo = `${producto.normTitulo} ${producto.normTipo}`;
-    const coincide = palabras.filter((p) => objetivo.includes(p));
+    const coincide = terminos.filter((p) => objetivo.includes(p));
     if (!coincide.length) continue;
     // Cuantas palabras coinciden y que tan largo es el titulo: prima el
     // match exacto sobre el tipo de producto.
