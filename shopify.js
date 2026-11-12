@@ -905,6 +905,146 @@ async function searchProducts(texto) {
   return resultados.slice(0, 4);
 }
 
+
+// ---------------------------------------------------------------------------
+// Indice de productos en memoria
+// ---------------------------------------------------------------------------
+// La busqueda por titulo de Shopify es tonta con las tildes: "poleron" no
+// encuentra "Poleron". Ademas el cliente dice "el poleron" (tipo de producto)
+// y no el nombre exacto. Se baja el catalogo una vez y se busca en local,
+// sin tildes y por tipo O titulo.
+
+let catalogIndex = null; // Array de productos
+let catalogIndexAt = 0;
+const CATALOG_TTL_MS = Number(process.env.CATALOG_TTL_MS || 10 * 60 * 1000);
+
+/**
+ * Normaliza texto para comparar sin tildes.
+ *
+ * @param {string} text Texto.
+ * @returns {string}
+ */
+function norm(text) {
+  return String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+/**
+ * Descarga el catalogo completo (con title, productType, precio y tallas).
+ *
+ * @param {object} [options] { fresh }
+ * @returns {Promise<object[]>}
+ */
+async function getCatalogIndex({ fresh = false } = {}) {
+  if (!fresh && catalogIndex && Date.now() - catalogIndexAt < CATALOG_TTL_MS) {
+    return catalogIndex;
+  }
+
+  const productos = [];
+  let after = null;
+  let paginas = 0;
+
+  let masPaginas = true;
+  while (masPaginas && paginas < 10) {
+    const data = await graphql(
+      `query ($after: String) {
+        products(first: 100, after: $after) {
+          nodes {
+            title
+            handle
+            productType
+            featuredImage { url }
+            variants(first: 30) { nodes { title price } }
+          }
+          pageInfo { hasNextPage endCursor }
+        }
+      }`,
+      { after }
+    );
+
+    for (const node of data.products?.nodes || []) {
+      const tallas = [];
+      let precio = null;
+      for (const v of node.variants?.nodes || []) {
+        const t = (v.title || "").split(" / ")[0].trim();
+        if (t && t.toLowerCase() !== "default title" && !tallas.includes(t)) {
+          tallas.push(t);
+        }
+        if (precio === null && v.price) precio = Math.round(Number(v.price) / 100);
+      }
+      productos.push({
+        titulo: node.title,
+        tipo: node.productType || null,
+        precio,
+        tallas,
+        handle: node.handle,
+        link: `https://mondano.cl/products/${node.handle}`,
+        imagen: node.featuredImage?.url || null,
+        normTitulo: norm(node.title),
+        normTipo: norm(node.productType || ""),
+      });
+    }
+
+    after = data.products?.pageInfo?.endCursor;
+    masPaginas = Boolean(data.products?.pageInfo?.hasNextPage);
+    paginas++;
+  }
+
+  catalogIndex = productos;
+  catalogIndexAt = Date.now();
+  console.log(`[shopify] catalogo: ${productos.length} productos`);
+  return productos;
+}
+
+/**
+ * Busca productos por lo que dijo el cliente.
+ *
+ * Compara sin tildes y busca en el titulo Y en el tipo de producto, asi
+ * "el poleron" encuentra los polerones aunque se llamen "Poleron Blue
+ * Spring Sweatshirt".
+ *
+ * @param {string} texto Mensaje del cliente.
+ * @returns {Promise<object[]>}
+ */
+async function searchProducts(texto) {
+  const palabras = norm(texto)
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length >= 4 && !STOPWORDS.has(w))
+    .slice(0, 6);
+
+  if (!palabras.length) return [];
+
+  const catalogo = await getCatalogIndex();
+  const encontrados = [];
+
+  for (const producto of catalogo) {
+    const objetivo = `${producto.normTitulo} ${producto.normTipo}`;
+    const coincide = palabras.filter((p) => objetivo.includes(p));
+    if (!coincide.length) continue;
+    // Cuantas palabras coinciden y que tan largo es el titulo: prima el
+    // match exacto sobre el tipo de producto.
+    encontrados.push({
+      ...producto,
+      _score: coincide.length * 10 - producto.normTitulo.length / 100,
+    });
+  }
+
+  encontrados.sort((a, b) => b._score - a._score);
+  const top = encontrados.slice(0, 4).map(({ _score, ...p }) => p);
+
+  // La tabla de medidas solo para los queserve (1 consulta cada uno).
+  for (const p of top) {
+    const tabla = await getProductSizeTable(p.titulo);
+    if (tabla.imagen) p.imagenTalla = tabla.imagen;
+    if (tabla.texto) p.tablaMedidas = tabla.texto;
+  }
+
+  console.log(`[shopify] productos encontrados: ${top.length}`);
+  return top;
+}
+
 module.exports = {
   SHOPIFY_SHOP,
   API_VERSION,
@@ -934,4 +1074,6 @@ module.exports = {
   getSizeGuide,
   getProductSizeTable,
   searchProducts,
+  getCatalogIndex,
+  norm,
 };

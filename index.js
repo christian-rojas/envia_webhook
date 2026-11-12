@@ -15,6 +15,7 @@ const shopify = require("./shopify.js");
 const conversation = require("./conversation.js");
 const conversations = require("./conversations.js");
 const features = require("./features.js");
+const bandeja = require("./bandeja.js");
 
 // Palabras que delatan que una nota habla del proceso de fabricacion
 // (corte, planchado, ensamblaje...).
@@ -696,6 +697,41 @@ app.get("/diag/db", async (req, res) => {
   }
 
   res.status(200).json(resultado);
+});
+
+
+/**
+ * GET /bandeja
+ * Revisa la bandeja de Instagram y responde lo que haya quedado sin
+ * contestar (por ejemplo mensajes que quedaron en la carpeta de
+ * solicitudes). Pensado para un cron de Vercel.
+ */
+app.get("/bandeja", async (req, res) => {
+  if (!features.isEnabled("instagram")) {
+    return res.status(200).json({ ok: true, procesado: 0, motivo: "instagram apagado" });
+  }
+
+  try {
+    const pendientes = await bandeja.findUnanswered({ fresh: true });
+    console.log(`[bandeja] ${pendientes.length} mensajes sin responder`);
+
+    let procesados = 0;
+    for (const mensaje of pendientes) {
+      try {
+        await handleInstagramMessage(bandeja.toInboundMessage(mensaje), (to, body) =>
+          meta.sendInstagramMessage(to, body, { igUserId: process.env.META_INSTAGRAM_ACCOUNT_ID })
+        );
+        procesados++;
+      } catch (error) {
+        console.error("[bandeja] error procesando:", error.message);
+      }
+    }
+
+    res.status(200).json({ ok: true, procesados, revisados: pendientes.length });
+  } catch (error) {
+    console.error("[bandeja] error:", error.message);
+    res.status(200).json({ ok: false, error: error.message });
+  }
 });
 
 /**

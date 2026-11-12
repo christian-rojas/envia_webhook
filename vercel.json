@@ -10,5 +10,11 @@
       "source": "/((?!api/).*)",
       "destination": "/api/index.js"
     }
+  ],
+  "crons": [
+    {
+      "path": "/bandeja",
+      "schedule": "0 10 * * *"
+    }
   ]
 }
