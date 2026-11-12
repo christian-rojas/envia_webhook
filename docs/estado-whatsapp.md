@@ -41,12 +41,12 @@ Para revisarlo: `node scripts/ver_webhooks.js`
 
 ## Los dos pasos que faltan
 
-### 1. Publicar la app (bloquea los webhooks reales)
+### 1. Publicar la app — HECHO ✅
 
     https://developers.facebook.com/apps/2595593107610545/go_live/
 
-Lo que más se atora: falta la **URL de política de privacidad** en
-Basic Settings. La página "Go Live" lista lo que falte.
+La app `mondano_mensajes` ya está **publicada** (`published: true`), verificable
+con `node scripts/diagnostico_whatsapp.js`.
 
 ### 2. Método de pago (sin esto el cliente no ve los mensajes)
 
@@ -86,3 +86,21 @@ app, listar cuentas...), **no** para la Graph API.
 - `META_WHATSAPP_TOKEN` → envio de WhatsApp por Cloud API
 - `META_WABA_ID=554629607724135`, `META_PHONE_NUMBER_ID=530005643535929`
 - `FEATURE_WHATSAPP=0` → apagado hasta que el numero este verificado
+
+
+## Nota sobre el token
+
+El token de System User de `mondano_mensajes` **sirve para los dos canales**
+(Instagram y WhatsApp). Se le pueden pedir todos los scopes juntos:
+
+```
+instagram_manage_messages, pages_messaging, pages_manage_metadata,
+whatsapp_business_messaging, whatsapp_business_management, business_management
+```
+
+Ojo: **generar un token nuevo invalida el anterior.**
+
+Alternativa sin aprobación de dos personas: `node scripts/oauth_meta.js`
+(token de usuario, 60 días).
+
+Ver [setup-meta.md](setup-meta.md) y [gotchas.md](gotchas.md).

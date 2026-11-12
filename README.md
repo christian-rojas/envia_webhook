@@ -3,6 +3,31 @@
 Webhook en Vercel que recibe mensajes de Instagram (y prepara WhatsApp),
 consulta el estado del envío en Supabase + Envia y responde con x.ai.
 
+## 📚 Documentación
+
+| Documento | Para qué |
+|---|---|
+| **[docs/setup-meta.md](docs/setup-meta.md)** | **Puesta en marcha / reponer el bot desde cero.** Tokens, scopes, webhooks, variables, deploy y pruebas. |
+| **[docs/gotchas.md](docs/gotchas.md)** | **Las trampas de las APIs.** Lo que costó tiempo descubrir: límites, campos que no existen, errores que mienten. **Leer antes de tocar algo.** |
+| [docs/estado-whatsapp.md](docs/estado-whatsapp.md) | Estado real de WhatsApp según las herramientas MCP de Meta |
+| [docs/app-review-whatsapp.md](docs/app-review-whatsapp.md) | App review de WhatsApp |
+
+### Estado actual
+
+```
+Instagram   ✅ funcionando (seguimiento, proceso de fabricación, cambios y
+                          devoluciones, tallas, productos, historial)
+WhatsApp    ⏸ en pausa (FEATURE_WHATSAPP=0). App publicada y número
+                          registrado; falta método de pago y token.
+```
+
+Los feature toggles permiten apagar cada parte sin tocar código:
+
+```sh
+FEATURE_WHATSAPP=0   FEATURE_INSTAGRAM=1   FEATURE_MANUFACTURING=1
+FEATURE_PRODUCT_INFO=1   FEATURE_CONVERSATION_HISTORY=1   FEATURE_STORE_POLICIES=1
+```
+
 ## Rutas
 
 | Ruta | Método | Qué hace |
@@ -13,6 +38,11 @@ consulta el estado del envío en Supabase + Envia y responde con x.ai.
 | `/webhook/shopify` | `POST` | Webhook de Shopify (SMS de confirmación vía Twilio) |
 | `/tracking/:order_id` | `GET` | Estado de un pedido (`MON3007`) |
 | `/envia/:tracking_id` | `GET` | Estado crudo de Envia (`712913101224`) |
+| `/bandeja` | `GET` | Responde lo que quedó sin contestar en la bandeja |
+| `/health` | `GET` | Estado del bot y de los feature toggles |
+| `/diag/prompt` | `GET` | Prompt activo (para verificar el deploy) |
+| `/diag/ctx` | `GET` | Contexto que recibe la IA + su respuesta |
+| `/diag/db` | `GET` | Tiempos de la API de Meta |
 
 ## Configuración
 
@@ -269,10 +299,26 @@ Responder a `recipient.id` es mandarse un mensaje a uno mismo.
 
 ## Scripts
 
+### Puesta en marcha
+- `scripts/oauth_meta.js` — **token de Meta sin aprobación de dos personas**
+  (OAuth de la propia app, 60 días). Requisito: registrar
+  `http://localhost:8766/callback` en Facebook Login → Valid OAuth Redirect URIs.
 - `scripts/setup_meta_integration.js` — scopes + suscripción + estado final.
-- `scripts/test_resolucion.js` — 41 tests de extracción de pedido/teléfono,
-  memoria de conversación y contextos. `node scripts/test_resolucion.js`
-- `scripts/test_conversacion.js` — prueba el flujo completo con el handler real
-  y un remitente falso (no envía nada a Instagram).
-- `validate_meta.js` — validación de credenciales de Meta.
+- `scripts/setup_whatsapp.js` — setup de WhatsApp Cloud API (suscripción, token,
+  código de verificación, plantillas).
+- `scripts/ver_webhooks.js` — callback URLs por caso de uso (Instagram y
+  WhatsApp son independientes).
+- `scripts/verificar_numero.js` — pide el código SMS de verificación.
+- `scripts/diagnostico_whatsapp.js` — estado de WhatsApp según el MCP de Meta.
+- `scripts/mcp_client.js` / `scripts/mcp_whatsapp_oauth.js` — cliente MCP de las
+  herramientas de WhatsApp de Meta.
 - `setup_meta_creds.sh` — alta de credenciales en Vercel.
+
+### Pruebas
+- `scripts/test_resolucion.js` — **54 tests** de extracción de pedido/teléfono,
+  memoria de conversación, contextos y filtrado de notas.
+- `scripts/test_conversacion.js` — flujo completo con el handler real y un
+  remitente falso (no envía nada a Instagram).
+- `scripts/buscar_notas_manufactura.js` — dónde están las notas de taller.
+- `scripts/bot-test.js`, `scripts/matriz_tokens.js` — pruebas de tokens y del
+  bot en distintos modos.
