@@ -421,22 +421,46 @@ function plantillaEstado({ orderId, shipment, fabNotes = {} }) {
 }
 
 /**
+ * Plantillas para pedir el numero de pedido.
+ *
+ * Hay varias porque Instagram penaliza los envios con TEXTO IDENTICO a
+ * varios clientes seguidos (el cron de la bandeja mandaba la misma frase a
+ * 5 personas). Se elige una segun el cliente, de forma estable: si vuelve
+ * a tocarle, le toca la misma.
+ *
+ * Todas contienen "formato MON3007", que es la marca que permite saber que
+ * ya se le pregunto (tambien la usan los mensajes del bot viejo).
+ */
+const PLANTILLAS_PEDIR = [
+  "Para revisar tu pedido, ¿me das el número de pedido (formato MON3007)?",
+  "¿Me pasas el número de tu pedido (formato MON3007) para revisarlo?",
+  "Necesito el número de tu pedido (formato MON3007) para contarte cómo va.",
+  "¿Cuál es el número de tu pedido? Va en formato MON3007.",
+];
+
+/**
  * Plantilla para pedir el numero de pedido.
  *
  * @param {string} [orderId] Pedido que no se encontro (opcional).
+ * @param {string} [clienteId] Id del cliente (para variar la frase).
  * @returns {string} Mensaje para el cliente.
  */
-function plantillaPedirNumero(orderId) {
+function plantillaPedirNumero(orderId, clienteId) {
   if (orderId) {
     return (
       `${SALUDO}. No encontramos el pedido ${orderId}. ` +
       "Revisa el número, debe tener el formato MON3007 (por ejemplo MON3007)."
     );
   }
-  return (
-    `${SALUDO}. Para revisar tu pedido, ` +
-    "¿me das el número de pedido (formato MON3007)?"
-  );
+
+  let indice = 0;
+  if (clienteId) {
+    let suma = 0;
+    for (const caracter of String(clienteId)) suma += caracter.charCodeAt(0);
+    indice = suma % PLANTILLAS_PEDIR.length;
+  }
+
+  return `${SALUDO}. ${PLANTILLAS_PEDIR[indice]}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -588,7 +612,7 @@ function decidir({
     }
     return {
       accion: "pedir",
-      texto: plantillaPedirNumero(null),
+      texto: plantillaPedirNumero(null, customerId),
       motivo: "no hay numero de pedido",
     };
   }
@@ -700,6 +724,7 @@ module.exports = {
   describirEstado,
   plantillaEstado,
   plantillaPedirNumero,
+  PLANTILLAS_PEDIR,
   pideAsesor,
   sobrePedido,
   problemaConPedido,
