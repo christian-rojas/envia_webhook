@@ -114,6 +114,17 @@ El bot ya no ofrece "quieres que te pase con un asesor", así que el "Sí" del
 cliente ya no dispara un loop. Si el cliente pide hablar con una persona
 explícitamente, se deriva **una vez**.
 
+## Depende del historial
+
+El flujo necesita leer el historial (`FEATURE_CONVERSATION_HISTORY=1`, que es
+el valor por defecto). Si se apaga:
+
+- El bot solo responde cuando el mensaje trae el número de pedido.
+- Si el mensaje no trae número → silencio (no se atreve a pedirlo de nuevo).
+
+Es el modo degradado: funciona, pero el bot solo contesta lo que se le
+puede resolver sin contexto.
+
 ## Pruebas
 
 ```sh
