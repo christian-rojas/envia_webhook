@@ -117,7 +117,7 @@ explícitamente, se deriva **una vez**.
 ## Pruebas
 
 ```sh
-node scripts/test_flujo.js        # 31 tests del flujo
+node scripts/test_flujo.js        # 30 tests del flujo
 node scripts/test_resolucion.js   # 54 tests de resolución de pedidos
 ```
 

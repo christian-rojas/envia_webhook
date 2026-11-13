@@ -219,6 +219,26 @@ const MIDS_TTL_MS = Number(process.env.MIDS_TTL_MS || 2 * 60 * 60 * 1000);
 const MIDS_MAX = 1000;
 
 /**
+ * Cuando Meta dice "Application request limit reached" (el limite de envios
+ * de la app esta agotado), no tiene sentido reintentar con cada mensaje del
+ * cliente: cuando se libere el limite, el cliente recibiria varias copias
+ * del mismo mensaje. Mejor esperar en silencio.
+ *
+ * Es un timestamp (ms) hasta el que no se intenta enviar de nuevo.
+ */
+let envioBloqueadoHasta = 0;
+const ENVIO_BLOQUEADO_MIN = Number(process.env.ENVIO_BLOQUEADO_MIN || 10);
+
+/**
+ * Indica si el envio esta bloqueado por el limite de la app.
+ *
+ * @returns {boolean}
+ */
+function envioBloqueado() {
+  return Date.now() < envioBloqueadoHasta;
+}
+
+/**
  * Marca un mensaje como procesado.
  *
  * @param {string|null} mid Id del mensaje.
@@ -1821,9 +1841,26 @@ async function handleInstagramFlow(message, sender) {
     return;
   }
 
+  // Si la app tiene agotado el limite de envios de Meta, se espera en
+  // silencio: reintentar con cada mensaje llenaria al cliente de copias
+  // del mismo texto en cuanto se libere el limite.
+  if (envioBloqueado()) {
+    console.log(
+      "[instagram] no se responde: el limite de envios de Meta esta agotado"
+    );
+    return;
+  }
+
   const sent = await sender(message.customerId, decision.texto);
   if (sent && sent.ok === false) {
     console.error("[instagram] error enviando:", sent.error);
+    if (/request limit reached|#4\b/i.test(String(sent.error || ""))) {
+      envioBloqueadoHasta = Date.now() + ENVIO_BLOQUEADO_MIN * 60 * 1000;
+      console.warn(
+        `[instagram] se pausan los envios ${ENVIO_BLOQUEADO_MIN} min: ` +
+          "limite de la app de Meta"
+      );
+    }
     return;
   }
 

@@ -191,6 +191,29 @@ Sin envio (todavia no hay etiqueta)           -> "en confección"
 Decir "en confección" y mostrar el numero de seguimiento al mismo tiempo
 deja al cliente sin saber si su pedido salio o no.
 
+### 15d. El limite de la app es de 200 llamadas por HORA (lecturas y envios)
+
+Las llamadas de lectura (conversations) y las de envio (messages) consumen el
+MISMO presupuesto de la app. Con varias pruebas seguidas se llega al tope:
+
+```
+(#4) Application request limit reached
+x-app-usage: {"call_count":40,...}     # 40% del presupuesto, y aun asi falla
+```
+
+La cabecera `x-app-usage` NO refleja el bloqueo del envio: puede marcar 40% y
+aun asi no dejar mandar. Y el error es el mismo para todos los
+destinatarios (no es por cliente).
+
+Por eso el historial se lee **paginado y cacheado** (3 llamadas cada 15
+minutos en vez de 2 por cada mensaje), y cuando el envio falla con #4 se
+pausan los envios 10 minutos (`ENVIO_BLOQUEADO_MIN`) para no llenarle al
+cliente de copias del mismo mensaje cuando se libere el limite.
+
+OJO: ese pausa es en memoria de la instancia. En Vercel cada invocacion
+puede caer en una instancia distinta, asi que es una proteccion "a mejor
+hacer" y no una garantia.
+
 ### 16. Versión de la API
 
 `v23.0` ya está deprecada (sale el aviso `x-ad-api-version-warning`). Se usa
