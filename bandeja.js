@@ -26,6 +26,15 @@ const BANDEJA_CACHE_MS = Number(process.env.BANDEJA_CACHE_MS || 60000);
  */
 const MAX_EDAD_HORAS = Number(process.env.BANDEJA_MAX_HORAS || 23);
 
+/**
+ * Cuantos hilos se revisan en detalle como maximo.
+ *
+ * Cada detalle es una llamada a la Graph API y el limite de la app es bajo
+ * (con 25 seguidas sale "Application request limit reached"), asi que se
+ * revisan solo los hilos mas recientes.
+ */
+const MAX_HILOS = Number(process.env.BANDEJA_MAX_HILOS || 10);
+
 let cache = null;
 
 /**
@@ -47,7 +56,7 @@ async function listInboxMessages({ fresh = false } = {}) {
  * Devuelve los mensajes de clientes a los que NO se les ha contestado.
  *
  * Se mira el ultimo mensaje de cada hilo: si es del cliente (no nuestro) y
- * tiene texto, es una mensagem sin responder.
+ * tiene texto, es una mensaje sin responder.
  *
  * @param {object} [options] { fresh }
  * @returns {Promise<object[]>} [{ conversationId, mensaje }]
@@ -56,13 +65,25 @@ async function findUnanswered({ fresh = false } = {}) {
   const hilos = await listInboxMessages({ fresh });
   const pendientes = [];
 
-  for (const hilo of hilos) {
-    const mensajes = [...(hilo.messages?.data || [])].sort((a, b) =>
+  // La lista viene ligera (id + participantes): los mensajes hay que
+  // pedirlos hilo por hilo.
+  for (const hilo of hilos.slice(0, MAX_HILOS)) {
+    let mensajes = [];
+    try {
+      mensajes = await conversations.getThreadMessages(hilo.id);
+    } catch (error) {
+      console.warn(
+        `[bandeja] no se pudo leer el hilo ${hilo.id}: ${error.message}`
+      );
+      continue;
+    }
+
+    const ordenados = [...mensajes].sort((a, b) =>
       String(a.created_time).localeCompare(String(b.created_time))
     );
-    if (!mensajes.length) continue;
+    if (!ordenados.length) continue;
 
-    const ultimo = mensajes[mensajes.length - 1];
+    const ultimo = ordenados[ordenados.length - 1];
     // Si el ultimo mensaje es nuestro, ya respondimos.
     if (String(ultimo.from?.id || "") === String(conversations.OUR_ID)) continue;
     const texto = String(ultimo.message || "").trim();
@@ -99,9 +120,13 @@ async function findUnanswered({ fresh = false } = {}) {
  * @returns {object} Mensaje normalizado (como el webhook).
  */
 function toInboundMessage(mensaje) {
+  const from = mensaje.from?.id || null;
   return {
     messageId: mensaje.id,
-    from: mensaje.from?.id || null,
+    from,
+    // El handler usa customerId para buscar el hilo y la memoria del bot:
+    // sin esto, la bandeja no encuentra la conversacion ni el pedido.
+    customerId: from,
     profileName: mensaje.from?.username || null,
     text: mensaje.texto,
     timestamp: mensaje.createdTime ? Date.parse(mensaje.createdTime) : null,
@@ -113,6 +138,7 @@ function toInboundMessage(mensaje) {
 
 module.exports = {
   MAX_EDAD_HORAS,
+  MAX_HILOS,
   listInboxMessages,
   findUnanswered,
   toInboundMessage,

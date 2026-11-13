@@ -16,6 +16,7 @@ const conversation = require("./conversation.js");
 const conversations = require("./conversations.js");
 const features = require("./features.js");
 const bandeja = require("./bandeja.js");
+const flow = require("./flow.js");
 
 // Palabras que delatan que una nota habla del proceso de fabricacion
 // (corte, planchado, ensamblaje...).
@@ -203,6 +204,42 @@ const app = express();
 // Ultimo mensaje entrante (Instagram o WhatsApp). Lo expone /health para
 // poder verificar si el webhook sigue recibiendo eventos.
 let lastInboundAt = null;
+
+/**
+ * Ids de mensajes ya procesados, para no responder dos veces al mismo.
+ *
+ * Meta puede reenviar el mismo webhook (si no recibe el 200 a tiempo) y a
+ * veces entrega el mismo evento por mas de una suscripcion. Sin esto, el
+ * cliente recibe la misma respuesta dos veces.
+ *
+ * @type {Map<string, number>}
+ */
+const midsProcesados = new Map();
+const MIDS_TTL_MS = Number(process.env.MIDS_TTL_MS || 2 * 60 * 60 * 1000);
+const MIDS_MAX = 1000;
+
+/**
+ * Marca un mensaje como procesado.
+ *
+ * @param {string|null} mid Id del mensaje.
+ * @returns {boolean} true si ya se habia procesado (o sea, duplicado).
+ */
+function yaProcesado(mid) {
+  if (!mid) return false;
+
+  const ahora = Date.now();
+  for (const [id, t] of midsProcesados) {
+    if (ahora - t > MIDS_TTL_MS) midsProcesados.delete(id);
+  }
+
+  if (midsProcesados.has(mid)) return true;
+  midsProcesados.set(mid, ahora);
+  if (midsProcesados.size > MIDS_MAX) {
+    const masAntiguo = midsProcesados.keys().next().value;
+    midsProcesados.delete(masAntiguo);
+  }
+  return false;
+}
 // app.use(express.json());
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -769,7 +806,10 @@ app.get("/bandeja", async (req, res) => {
     console.log(`[bandeja] ${pendientes.length} mensajes sin responder`);
 
     let procesados = 0;
-    for (const mensaje of pendientes) {
+    // Tope por corrida: el bot no le manda una ráfaga de mensajes a todos
+    // los pendientes de un día. Lo que queda se contesta en la próxima.
+    const maximo = Number(process.env.BANDEJA_MAX_RESPUESTAS || 5);
+    for (const mensaje of pendientes.slice(0, maximo)) {
       try {
         await handleInstagramMessage(bandeja.toInboundMessage(mensaje), (to, body) =>
           meta.sendInstagramMessage(to, body, { igUserId: process.env.META_INSTAGRAM_ACCOUNT_ID })
@@ -1256,6 +1296,15 @@ app.post("/webhook/instagram", async (req, res) => {
     req.waitUntil || vercelWaitUntil || ((p) => p && p.catch(() => {}));
 
   const tasks = messages.map(async (message) => {
+    // Si este mensaje ya se proceso, no se responde otra vez: Meta puede
+    // reenviar el mismo webhook y el cliente no merece recibirlo dos veces.
+    if (yaProcesado(message.messageId)) {
+      console.log(
+        `[instagram] mensaje duplicado (${message.messageId}): se ignora`
+      );
+      return;
+    }
+
     // El destinatario es el cliente (sender.id del webhook), no nuestra cuenta.
     // Si se pasa un id explicito se respeta; si no, se usa el del mensaje.
     const sender = (to, body) =>
@@ -1617,22 +1666,38 @@ async function buildProductContext(text) {
  * Recoge el historial de la conversacion para que el bot entienda el
  * contexto (el pedido ya dado, lo ya respondido, si ya saludamos...).
  *
+ * Ademas devuelve el ANALISIS del hilo para el flujo determinista: quien
+ * escribio (el bot o un asesor humano), que se le pidio ya, y que estados
+ * se le comunicaron.
+ *
  * @param {object} message Mensaje normalizado.
- * @returns {Promise<{history: string, orderId: string|null, greeted: boolean}>}
+ * @returns {Promise<{history: string, orderId: string|null, greeted: boolean,
+ *   messages: Array, analisis: object, ok: boolean}>}
  */
 async function readConversationContext(message) {
-  const vacio = { history: "", orderId: null, greeted: false };
+  const vacio = {
+    history: "",
+    orderId: null,
+    greeted: false,
+    messages: [],
+    analisis: flow.analizarHilo([]),
+    ok: false,
+  };
   if (!features.isEnabled("conversationHistory")) return vacio;
   try {
     const conv = await conversations.findConversation({
       senderId: message.customerId,
       text: message.text,
     });
-    if (!conv) return vacio;
+    // Hilo nuevo: no hay historial, pero no es un error (se puede responder).
+    if (!conv) return { ...vacio, ok: true };
     return {
       history: conversations.formatHistory(conv.messages),
       orderId: conversations.findOrderIdInHistory(conv.messages),
       greeted: conversations.alreadyGreeted(conv.messages),
+      messages: conv.messages,
+      analisis: flow.analizarHilo(conv.messages),
+      ok: true,
     };
   } catch (error) {
     console.warn("[conversaciones] no se pudo leer el historial:", error.message);
@@ -1686,6 +1751,95 @@ async function buildStoreKnowledge(resolved) {
 }
 
 /**
+ * Procesa un mensaje de Instagram con el FLUJO DETERMINISTA.
+ *
+ * El bot solo hace dos cosas: pedir el numero de pedido o decir donde esta
+ * el pedido. Cada una, una sola vez. Y se calla si un asesor humano esta
+ * hablando con el cliente (o si el cliente pide hablar con uno).
+ *
+ * @param {object} message Mensaje normalizado.
+ * @param {Function} sender Funcion para enviar la respuesta.
+ * @returns {Promise<void>}
+ */
+async function handleInstagramFlow(message, sender) {
+  const { text } = message;
+  console.log(`[instagram] mensaje: ${text}`);
+
+  // Sin historial no se puede saber si ya se le contesto ni si hay un asesor
+  // de por medio. Si el mensaje trae el numero de pedido se responde igual
+  // (una respuesta por mensaje nunca es bombardeo); si no lo trae, silencio:
+  // no se vuelve a pedir un numero que el cliente ya dio.
+  let conv = await readConversationContext(message);
+  if (!conv.ok) {
+    const cacheado = flow.leerCache(message.customerId);
+    const sabemosAlgo =
+      cacheado.pidioNumero ||
+      cacheado.handoff ||
+      Object.keys(cacheado.estados || {}).length > 0;
+
+    if (!sabemosAlgo && !orders.extractOrderId(text)) {
+      console.log(
+        "[instagram] sin historial: no se responde (no se sabe si ya se le " +
+          "contesto o si hay un asesor)"
+      );
+      return;
+    }
+
+    console.warn(
+      "[instagram] no se pudo leer el historial: se responde con lo que se sabe"
+    );
+    conv = { ...conv, ok: true, orderId: null };
+  }
+
+  // El pedido puede venir en el mensaje, del historial o de la cache del
+  // bot (por si el historial todavia no lo muestra).
+  const orderIdCache = flow.leerCache(message.customerId).orderId || null;
+  const resolved = await resolveInstagramOrder(message, {
+    orderIdFromHistory: conv.orderId || orderIdCache,
+  });
+  console.log(
+    `[instagram] busqueda: reason=${resolved.reason} ` +
+      `orderId=${resolved.orderId || "n/d"}`
+  );
+
+  // Notas del taller: needed para saber si el pedido esta preparado o sigue
+  // en confeccion.
+  const fabNotes = await getManufacturingNotes(resolved);
+
+  const decision = flow.decidir({
+    text,
+    customerId: message.customerId,
+    analisis: conv.analisis,
+    resolved,
+    fabNotes,
+  });
+
+  console.log(`[instagram] decision: ${decision.accion} (${decision.motivo})`);
+
+  if (decision.accion === "silencio") {
+    console.log("[instagram] sin respuesta: " + decision.motivo);
+    return;
+  }
+
+  const sent = await sender(message.customerId, decision.texto);
+  if (sent && sent.ok === false) {
+    console.error("[instagram] error enviando:", sent.error);
+    return;
+  }
+
+  // Se registra lo que se respondio, para no repetirlo.
+  const estado = flow.describirEstado(resolved.shipment, fabNotes);
+  flow.registrar(
+    message.customerId,
+    decision.accion,
+    resolved.orderId,
+    estado.slug
+  );
+
+  console.log(`[instagram] respuesta enviada: ${decision.texto}`);
+}
+
+/**
  * Procesa un mensaje de Instagram. Reusa la logica del agente, pero la
  * busqueda de pedidos no puede usar el id numerico del usuario de Instagram
  * como telefono, asi que se identifica al cliente por su numero de pedido
@@ -1695,6 +1849,12 @@ async function buildStoreKnowledge(resolved) {
  * @param {Function} sender Funcion para enviar la respuesta.
  */
 async function handleInstagramMessage(message, sender) {
+  // El flujo determinista reemplaza a la IA: es el que evita el "bombardeo"
+  // (respuestas repetidas y respuestas encima de un asesor humano).
+  if (features.isEnabled("botAutomatico")) {
+    return handleInstagramFlow(message, sender);
+  }
+
   const { text } = message;
   console.log(`[instagram] mensaje: ${text}`);
 

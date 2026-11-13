@@ -53,6 +53,23 @@ GET /{ig-user-id}/conversations?limit=25   → 25 conversaciones
 GET /{ig-user-id}/conversations?limit=50   → 0 conversaciones  (¡y no da error!)
 ```
 
+### 4b. El detalle de un hilo agota el limite de llamadas; la lista no
+
+El endpoint `GET /{conversation-id}` (los mensajes de UN hilo) llega muy
+rapido al tope de la app:
+
+```
+(#4) Application request limit reached
+```
+
+En cambio `GET /{ig-user-id}/conversations?fields=...,messages{...}&limit=10`
+funciona sin problema. Por eso el historial se lee **paginado de 10 en 10**
+(3 llamadas para los 25 hilos) y se cachea 15 minutos, en vez de pedir el
+detalle de cada hilo.
+
+Ademas las llamadas se serializan (`GRAPH_MIN_INTERVALO_MS`, 1,5 s entre una
+y otra): varios pedidos seguidos activan el limite.
+
 ### 5. No pidas los mensajes de las 25 conversaciones de una vez
 
 ```sh
@@ -153,6 +170,26 @@ recomienda Meta para apps que hacen ambos).
 
 Las políticas están en **Pages**, no en el objeto `Shop`:
 `politica-de-cambio-y-devoluciones` (2363 chars) y `guia-de-tallas`.
+
+### 15b. "MON3007" y "MON-3007" son el mismo numero
+
+El bot viejo escribia "MON-3007" (con guion) y el nuevo "MON3007". Al
+comparar marcas de mensajes hay que quitar los guiones, o el bot se toma sus
+propios mensajes por mensajes de un asesor humano.
+
+### 15c. "En confección" y "número de seguimiento" se contradicen
+
+Si el pedido ya tiene etiqueta, **no** esta en confección: esta preparado y
+esperando que la transportista lo retire. La etiqueta se genera cuando el
+pedido esta listo, asi que:
+
+```
+Estado del envio "Created" + tracking number  -> "preparado"
+Sin envio (todavia no hay etiqueta)           -> "en confección"
+```
+
+Decir "en confección" y mostrar el numero de seguimiento al mismo tiempo
+deja al cliente sin saber si su pedido salio o no.
 
 ### 16. Versión de la API
 

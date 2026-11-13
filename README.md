@@ -9,23 +9,29 @@ consulta el estado del envío en Supabase + Envia y responde con x.ai.
 |---|---|
 | **[docs/setup-meta.md](docs/setup-meta.md)** | **Puesta en marcha / reponer el bot desde cero.** Tokens, scopes, webhooks, variables, deploy y pruebas. |
 | **[docs/gotchas.md](docs/gotchas.md)** | **Las trampas de las APIs.** Lo que costó tiempo descubrir: límites, campos que no existen, errores que mienten. **Leer antes de tocar algo.** |
+| **[docs/flujo-bot.md](docs/flujo-bot.md)** | **Cómo responde el bot** (las 2 respuestas y por qué no se repite). |
 | [docs/estado-whatsapp.md](docs/estado-whatsapp.md) | Estado real de WhatsApp según las herramientas MCP de Meta |
 | [docs/app-review-whatsapp.md](docs/app-review-whatsapp.md) | App review de WhatsApp |
 
 ### Estado actual
 
 ```
-Instagram   ✅ funcionando (seguimiento, proceso de fabricación, cambios y
-                          devoluciones, tallas, productos, historial)
+Instagram   ✅ funcionando. El bot hace SOLO dos cosas: pedir el número de
+                          pedido y decir dónde está. Una vez cada una, y se
+                          calla si hay un asesor humano hablando.
 WhatsApp    ⏸ en pausa (FEATURE_WHATSAPP=0). App publicada y número
                           registrado; falta método de pago y token.
 ```
+
+> Ver [docs/flujo-bot.md](docs/flujo-bot.md). Con `FEATURE_BOT_AUTOMATICO=0`
+> vuelve el bot con IA (responde de todo, pero puede repetirse).
 
 Los feature toggles permiten apagar cada parte sin tocar código:
 
 ```sh
 FEATURE_WHATSAPP=0   FEATURE_INSTAGRAM=1   FEATURE_MANUFACTURING=1
 FEATURE_PRODUCT_INFO=1   FEATURE_CONVERSATION_HISTORY=1   FEATURE_STORE_POLICIES=1
+FEATURE_BOT_AUTOMATICO=1    # flujo determinista (sin IA) en los DMs
 ```
 
 ## Rutas
@@ -317,6 +323,8 @@ Responder a `recipient.id` es mandarse un mensaje a uno mismo.
 ### Pruebas
 - `scripts/test_resolucion.js` — **54 tests** de extracción de pedido/teléfono,
   memoria de conversación, contextos y filtrado de notas.
+- `scripts/test_flujo.js` — **31 tests** del flujo del bot (las 2 respuestas,
+  no repetir, detección de asesor, estados del pedido).
 - `scripts/test_conversacion.js` — flujo completo con el handler real y un
   remitente falso (no envía nada a Instagram).
 - `scripts/buscar_notas_manufactura.js` — dónde están las notas de taller.

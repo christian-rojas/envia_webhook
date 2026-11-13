@@ -5,19 +5,25 @@
  *
  *   GET /{ig-user-id}/conversations
  *       ?platform=instagram
- *       &fields=id,participants{id,username}
+ *       &fields=id,participants{id,username},messages{message,from{id,username},created_time}
  *
  * Sirve para que el bot entienda el contexto: que NO vuelva a pedir el
- * numero de pedido si ya se lo dieron, que no salude tres veces, y que no
- * repita lo que ya respondio.
+ * numero de pedido si ya se lo dieron, que no salude tres veces, que no
+ * repita lo que ya respondio y que se calle si un asesor humano esta
+ * hablando con el cliente.
  *
- * TRES LIMITES QUE IMPORTAN (aprendidos a la fuerza):
+ * LIMITES QUE IMPORTAN (aprendidos a la fuerza):
  *   1. El maximo de `limit` es 25 (con 50 devuelve 0 conversaciones).
  *   2. Pedir `messages` de las 25 conversaciones de una vez falla con
  *      "Please reduce the amount of data you're asking for". Por eso se
- *      pide una lista LIGERA (id + participantes) y despues el detalle de
- *      UN solo hilo.
+ *      pide de 10 en 10 y se pagina.
  *   3. El campo de texto es `message`, no `text`.
+ *   4. El limite de llamadas de la app es BAJO. Pedir el detalle de un
+ *      hilo (`GET /{conversation-id}`) agota el cuota rapidisimo
+ *      ("Application request limit reached"), mientras que la lista de 10
+ *      hilos con sus mensajes entra sin problema. Por eso TODO se lee con
+ *      la lista paginada y se cachea: 3 llamadas cada 15 minutos en vez de
+ *      2 por cada mensaje del cliente.
  *
  * En Instagram el remitente se identifica por su id de Instagram, que
  * coincide EXACTO con el participante del hilo. En WhatsApp el remitente es
@@ -39,24 +45,70 @@ try {
 const OUR_ID = process.env.META_INSTAGRAM_ACCOUNT_ID || "17841408417156397";
 const OUR_USERNAME = process.env.META_INSTAGRAM_USERNAME || "mondano.cl";
 
-/** Cuanto tiempo se cachea la lista de hilos. */
-const CACHE_MS = Number(process.env.CONVOS_CACHE_MS || 60000);
+/** Cuanto tiempo se cachea la lista de hilos (con sus mensajes). */
+const CACHE_MS = Number(process.env.CONVOS_CACHE_MS || 15 * 60 * 1000);
 
-/** Quantos mensajes de historico se le pasan al modelo. */
+/** Cuantos mensajes de historico se le pasan al modelo. */
 const HISTORY_MESSAGES = Number(process.env.CONVOS_HISTORY_MSGS || 16);
 
 /** Cuantos hilos se revisan en detalle como maximo (para no gastar cuota). */
 const MAX_HILOS_DETALLE = Number(process.env.CONVOS_MAX_HILOS || 12);
 
+/** Cuantos hilos se bajan por pagina (10 es lo que aguanta el limite de datos). */
+const PAGINA = Number(process.env.CONVOS_PAGINA || 10);
+
+/** Cuantos hilos se bajan en total. */
+const MAX_HILOS = Number(process.env.CONVOS_MAX_HILOS_TOTAL || 25);
+
 /**
- * TTL del detalle de los hilos. Instagram limita a 200 llamadas por hora y
- * por cuenta, asi que el detalle se cachea bastante tiempo: son 12 llamadas
- * cada 15 min (48 por hora).
+ * Cada llamada a la Graph API cuenta para el limite de la app. Con varias
+ * peticiones seguidas se llega al tope y empieza a fallar con:
+ *
+ *   (#4) Application request limit reached
+ *
+ * Se serializan las llamadas: nunca hay dos con menos de este intervalo.
  */
-const DETALLE_TTL_MS = Number(process.env.CONVOS_DETALLE_TTL_MS || 15 * 60 * 1000);
+const MIN_INTERVALO_MS = Number(process.env.GRAPH_MIN_INTERVALO_MS || 1500);
+let ultimaLlamada = 0;
 
 let listaCache = null; // { at, conversaciones }
-let detalleCache = null; // { at, porId: Map<id, mensajes> }
+
+/**
+ * Espera a que se pueda hacer la siguiente llamada a la Graph API.
+ *
+ * @returns {Promise<void>}
+ */
+async function esperarTurno() {
+  const ahora = Date.now();
+  const espera = ultimaLlamada + MIN_INTERVALO_MS - ahora;
+  if (espera > 0) {
+    await new Promise((r) => setTimeout(r, espera));
+  }
+  ultimaLlamada = Date.now();
+}
+
+/**
+ * Llama a la Graph API con una URL completa.
+ *
+ * @param {string} url Completa (incluye el access_token).
+ * @returns {Promise<object>}
+ */
+async function graphFetchUrl(url) {
+  await esperarTurno();
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20000);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    const data = await response.json().catch(() => ({}));
+    if (data.error) {
+      throw new Error(`Graph: ${data.error.message || "error"}`.slice(0, 200));
+    }
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /**
  * Llama a la Graph API de Meta.
@@ -74,48 +126,62 @@ async function graphFetch(path, params = {}) {
     "access_token",
     process.env.META_ACCESS_TOKEN || process.env.META_WHATSAPP_TOKEN
   );
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 20000);
-  try {
-    const response = await fetch(url, { signal: controller.signal });
-    const data = await response.json().catch(() => ({}));
-    if (data.error) {
-      throw new Error(
-        `Graph ${path}: ${data.error.message || "error"}`.slice(0, 200)
-      );
-    }
-    return data;
-  } finally {
-    clearTimeout(timer);
-  }
+  return graphFetchUrl(url.toString());
 }
 
 /**
- * Lista los hilos (ligero: id + participantes).
+ * Campos que se piden: los mensajes de cada hilo y quienes lo participan.
+ */
+const CAMPOS =
+  "id,participants{id,username}," +
+  "messages{message,from{id,username},created_time}";
+
+/**
+ * Lista los hilos con sus mensajes, paginando de 10 en 10.
  *
  * @param {object} [options] { fresh }
- * @returns {Promise<object[]>}
+ * @returns {Promise<object[]>} Conversaciones.
  */
 async function listConversations({ fresh = false } = {}) {
   if (!fresh && listaCache && Date.now() - listaCache.at < CACHE_MS) {
     return listaCache.conversaciones;
   }
 
-  const data = await graphFetch(`${OUR_ID}/conversations`, {
-    platform: "instagram",
-    fields: "id,participants{id,username}",
-    limit: 25,
-  });
+  const url = new URL(`${GRAPH_BASE}/${OUR_ID}/conversations`);
+  url.searchParams.set("platform", "instagram");
+  url.searchParams.set("fields", CAMPOS);
+  url.searchParams.set("limit", String(PAGINA));
+  url.searchParams.set(
+    "access_token",
+    process.env.META_ACCESS_TOKEN || process.env.META_WHATSAPP_TOKEN
+  );
 
-  const conversaciones = data.data || [];
+  const conversaciones = [];
+  let siguiente = url.toString();
+
+  // Pagina hasta tener los hilos o hasta que se acaben.
+  while (siguiente && conversaciones.length < MAX_HILOS) {
+    const data = await graphFetchUrl(siguiente);
+    conversaciones.push(...(data.data || []));
+    siguiente = data.paging?.next || null;
+  }
+
   listaCache = { at: Date.now(), conversaciones };
-  console.log(`[conversaciones] ${conversaciones.length} hilos`);
+  const mensajes = conversaciones.reduce(
+    (s, c) => s + ((c.messages?.data || []).length),
+    0
+  );
+  console.log(
+    `[conversaciones] ${conversaciones.length} hilos, ${mensajes} mensajes`
+  );
   return conversaciones;
 }
 
 /**
  * Trae los mensajes de UN hilo.
+ *
+ * Sale de la cache (la lista paginada ya los trae). Si el hilo no esta en
+ * cache se pide el detalle puntual (una sola llamada).
  *
  * @param {string} conversationId Id del hilo.
  * @returns {Promise<object[]>} Mensajes.
@@ -123,20 +189,15 @@ async function listConversations({ fresh = false } = {}) {
 async function getThreadMessages(conversationId) {
   if (!conversationId) return [];
 
-  if (detalleCache && Date.now() - detalleCache.at < DETALLE_TTL_MS) {
-    const guardado = detalleCache.porId.get(conversationId);
-    if (guardado) return guardado;
+  if (listaCache && Date.now() - listaCache.at < CACHE_MS) {
+    const hilo = listaCache.conversaciones.find((h) => h.id === conversationId);
+    if (hilo) return hilo.messages?.data || [];
   }
 
   const data = await graphFetch(conversationId, {
     fields: "id,messages{message,from{id,username},created_time}",
   });
-
-  const mensajes = data.messages?.data || [];
-  if (!detalleCache) detalleCache = { at: Date.now(), porId: new Map() };
-  detalleCache.porId.set(conversationId, mensajes);
-  detalleCache.at = Date.now();
-  return mensajes;
+  return data.messages?.data || [];
 }
 
 /**
@@ -154,13 +215,11 @@ async function findConversation({ senderId, text, orderId } = {}) {
   // 1) Instagram: el id del remitente es EXACTO el participante del hilo.
   if (senderId) {
     const hilo = hilos.find((h) =>
-      (h.participants?.data || []).some(
-        (p) => String(p.id) === String(senderId)
-      )
+      (h.participants?.data || []).some((p) => String(p.id) === String(senderId))
     );
     if (hilo) {
-      const messages = await getThreadMessages(hilo.id);
-      return { id: hilo.id, messages };
+      const messages = hilo.messages?.data || [];
+      if (messages.length) return { id: hilo.id, messages };
     }
   }
 
@@ -170,24 +229,17 @@ async function findConversation({ senderId, text, orderId } = {}) {
 
   // 2) WhatsApp: el remitente es un telefono y Meta lo expone por su
   // identidad de Instagram. Se buscan los hilos revisando el detalle de
-  // algunos (con tope, para no gastar cuota: el limite de Instagram es de
-  // 200 llamadas por hora y por cuenta).
+  // algunos (con tope, para no gastar cuota).
   const candidatos = hilos.slice(0, MAX_HILOS_DETALLE);
-  const detalles = await Promise.all(
-    candidatos.map((h) =>
-      getThreadMessages(h.id).catch(() => [])
-    )
-  );
-
-  for (let i = 0; i < candidatos.length; i++) {
-    const mensajes = detalles[i];
+  for (const candidato of candidatos) {
+    const mensajes = candidato.messages?.data || [];
     if (!mensajes.length) continue;
 
     if (texto.length >= 6) {
       const hit = mensajes.some(
         (m) => String(m.message || "").trim() === texto
       );
-      if (hit) return { id: candidatos[i].id, messages: mensajes };
+      if (hit) return { id: candidato.id, messages };
     }
 
     if (pedido) {
@@ -196,7 +248,7 @@ async function findConversation({ senderId, text, orderId } = {}) {
         "i"
       );
       const hit = mensajes.some((m) => re.test(String(m.message || "")));
-      if (hit) return { id: candidatos[i].id, messages: mensajes };
+      if (hit) return { id: candidato.id, messages };
     }
   }
 
@@ -262,7 +314,12 @@ module.exports = {
   OUR_USERNAME,
   HISTORY_MESSAGES,
   MAX_HILOS_DETALLE,
+  PAGINA,
+  MAX_HILOS,
+  CACHE_MS,
+  MIN_INTERVALO_MS,
   graphFetch,
+  graphFetchUrl,
   listConversations,
   getThreadMessages,
   findConversation,

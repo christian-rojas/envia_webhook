@@ -45,6 +45,14 @@ const DEFINICIONES = {
   },
   // Politica de cambios y devoluciones + guia de tallas.
   storePolicies: { porDefecto: true, desc: "Politicas y guias de la tienda" },
+  // Flujo determinista: el bot solo pide el numero de pedido o dice donde
+  // esta el pedido, una vez cada uno, y se calla si hay un asesor humano
+  // hablando con el cliente. Apagado vuelve el bot con IA (mas flexible,
+  // pero puede repetir respuestas).
+  botAutomatico: {
+    porDefecto: true,
+    desc: "Flujo automatico (pedir numero / estado del pedido, una vez)",
+  },
 };
 
 /**
