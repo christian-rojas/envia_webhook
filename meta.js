@@ -274,8 +274,15 @@ async function sendInstagramMessage(recipientId, body, options = {}) {
     const result = await postInstagramMessage(url, recipientId, body, accessToken);
     if (result.ok) return result;
 
+    const code = result.data?.error?.code;
+
+    // (#4) es el limite de la app de Meta. Reintentar a los 5 s no sirve de
+    // nada (la cuota no se libera tan rapido) y cada reintento gasta mas
+    // cuota. Se devuelve el error para que el handler pause los envios.
+    if (code === 4) return result;
+
     const transient =
-      result.data?.error?.is_transient === true || result.data?.error?.code === 4;
+      result.data?.error?.is_transient === true || code === 4;
     if (!transient || attempt === maxAttempts) return result;
 
     const wait = backoffMs * attempt;
