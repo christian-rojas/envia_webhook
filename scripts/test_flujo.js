@@ -399,6 +399,67 @@ check(
   r.decision.texto
 );
 
+console.log("\n== 13) Si el cliente insiste (toggle FEATURE_REPETIR_ESTADO) ==");
+
+const hiloInsistencia = [
+  msg({ from: CLIENTE, text: "hola, mi pedido MON4712" }),
+  msg({
+    from: OUR,
+    text: "Hola, gracias por comunicarte con nosotros. Estado de tu pedido MON4712: en confección.",
+  }),
+  msg({ from: CLIENTE, text: "Cuánto demora ?" }),
+];
+
+r = correr({
+  text: "Cuánto demora ?",
+  mensajes: hiloInsistencia,
+  resolved: {
+    shipment: null,
+    orderId: "MON4712",
+    reason: "pedido_sin_envio",
+  },
+});
+check(
+  "por defecto se calla (toggle apagado)",
+  r.decision.accion === "silencio",
+  r.decision.accion + " / " + r.decision.motivo
+);
+
+process.env.FEATURE_REPETIR_ESTADO = "1";
+r = correr({
+  text: "Cuánto demora ?",
+  mensajes: hiloInsistencia,
+  resolved: {
+    shipment: null,
+    orderId: "MON4712",
+    reason: "pedido_sin_envio",
+  },
+});
+check(
+  "con el toggle, repite el estado UNA vez",
+  r.decision.accion === "estado",
+  r.decision.accion + " / " + r.decision.motivo
+);
+
+r = correr({
+  text: "Cuánto demora ?",
+  mensajes: [
+    ...hiloInsistencia,
+    msg({ from: CLIENTE, text: "Cuánto demora?" }),
+  ],
+  resolved: {
+    shipment: null,
+    orderId: "MON4712",
+    reason: "pedido_sin_envio",
+  },
+});
+check(
+  "si insiste mas de una vez, se calla igual",
+  r.decision.accion === "silencio",
+  r.decision.accion + " / " + r.decision.motivo
+);
+delete process.env.FEATURE_REPETIR_ESTADO;
+
 console.log(
   `\n${pasaron} pasaron, ${fallaron} fallaron\n`
 );

@@ -114,6 +114,17 @@ El bot ya no ofrece "quieres que te pase con un asesor", así que el "Sí" del
 cliente ya no dispara un loop. Si el cliente pide hablar con una persona
 explícitamente, se deriva **una vez**.
 
+## Si el cliente insiste
+
+Con el comportamiento por defecto, si el cliente vuelve a preguntar y el
+estado **no ha cambiado**, el bot se calló. Es lo que pidió "solo una
+respuesta de pedir y una de estado", pero deja al cliente sin respuesta si
+insiste.
+
+Con `FEATURE_REPETIR_ESTADO=1` el bot repite el estado **una sola vez** si
+el cliente vuelve a preguntar (y solo una: si insiste dos veces, se calla
+igual). Sigue sin poder bombardear.
+
 ## Depende del historial
 
 El flujo necesita leer el historial (`FEATURE_CONVERSATION_HISTORY=1`, que es
@@ -128,7 +139,7 @@ puede resolver sin contexto.
 ## Pruebas
 
 ```sh
-node scripts/test_flujo.js        # 30 tests del flujo
+node scripts/test_flujo.js        # 33 tests del flujo
 node scripts/test_resolucion.js   # 54 tests de resolución de pedidos
 ```
 

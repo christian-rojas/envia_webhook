@@ -76,6 +76,22 @@ const VIGENCIA_ASESOR_MS = Number(
   process.env.FLOW_VIGENCIA_ASESOR_MS || 48 * 60 * 60 * 1000
 );
 
+/**
+ * Si el cliente vuelve a preguntar lo mismo, se le repite el estado UNA vez
+ * mas (no mas): evita el bombardeo pero no deja al cliente colgado.
+ *
+ * Apagado por defecto (FEATURE_REPETIR_ESTADO=0): el bot se calla siempre
+ * que ya le dijo el estado.
+ *
+ * @returns {boolean}
+ */
+function repetirEstado() {
+  const v = String(
+    process.env.FEATURE_REPETIR_ESTADO || "0"
+  ).trim().toLowerCase();
+  return ["1", "true", "on", "yes", "si", "sí"].includes(v);
+}
+
 // ---------------------------------------------------------------------------
 // Normalizacion y deteccion de mensajes
 // ---------------------------------------------------------------------------
@@ -219,6 +235,12 @@ function analizarHilo(messages, { ourId = NUESTRO_ID, now = Date.now() } = {}) {
     handoff: false,
     /** Estados ya comunicados: { MON4722: "en camino" }. */
     estados: {},
+    /**
+     * Cuantos mensajes del cliente hay DESPUES de la ultima respuesta del
+     * bot. Es la "insistencia": si el cliente vuelve a preguntar, quiere
+     * otra respuesta.
+     */
+    insistencias: 0,
   };
 
   const lista = [...(messages || [])].sort((a, b) =>
@@ -232,8 +254,13 @@ function analizarHilo(messages, { ourId = NUESTRO_ID, now = Date.now() } = {}) {
 
     if (!nuestro) {
       if (t) info.tCliente = Math.max(info.tCliente || 0, t);
+      info.insistencias++;
       continue;
     }
+
+    // Cada mensaje nuestro reinicia el contador: al final quedan los
+    // mensajes del cliente posteriores a la ultima respuesta del bot.
+    info.insistencias = 0;
 
     if (pidioNumero(texto)) {
       info.pidioNumero = true;
@@ -668,6 +695,20 @@ function decidir({
 
   const previo = estados[orderId];
   if (previo && normalizar(previo) === normalizar(estado.slug)) {
+    // El cliente ya sabe el estado. Por defecto el bot se calla; si se
+    // activa FEATURE_REPETIR_ESTADO y el cliente volvio a preguntar (una
+    // sola vez), se le repite el estado.
+    if (repetirEstado() && analisis.insistencias === 1) {
+      return {
+        accion: "estado",
+        texto: plantillaEstado({
+          orderId,
+          shipment: resolved.shipment,
+          fabNotes,
+        }),
+        motivo: "el cliente insistio: se repite el estado",
+      };
+    }
     return {
       accion: "silencio",
       texto: null,
@@ -727,6 +768,7 @@ module.exports = {
   PLANTILLAS_PEDIR,
   pideAsesor,
   sobrePedido,
+  repetirEstado,
   problemaConPedido,
   decidir,
   registrar,

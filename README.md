@@ -32,6 +32,7 @@ Los feature toggles permiten apagar cada parte sin tocar código:
 FEATURE_WHATSAPP=0   FEATURE_INSTAGRAM=1   FEATURE_MANUFACTURING=1
 FEATURE_PRODUCT_INFO=1   FEATURE_CONVERSATION_HISTORY=1   FEATURE_STORE_POLICIES=1
 FEATURE_BOT_AUTOMATICO=1    # flujo determinista (sin IA) en los DMs
+FEATURE_REPETIR_ESTADO=0   # 1 = repetir el estado si el cliente insiste
 ```
 
 ## Rutas
@@ -323,7 +324,7 @@ Responder a `recipient.id` es mandarse un mensaje a uno mismo.
 ### Pruebas
 - `scripts/test_resolucion.js` — **54 tests** de extracción de pedido/teléfono,
   memoria de conversación, contextos y filtrado de notas.
-- `scripts/test_flujo.js` — **30 tests** del flujo del bot (las 2 respuestas,
+- `scripts/test_flujo.js` — **33 tests** del flujo del bot (las 2 respuestas,
   no repetir, detección de asesor, estados del pedido).
 - `scripts/test_conversacion.js` — flujo completo con el handler real y un
   remitente falso (no envía nada a Instagram).
