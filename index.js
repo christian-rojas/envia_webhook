@@ -617,16 +617,11 @@ app.post("/webhook/shopify", async (req, res) => {
         console.error("Error saving to Supabase:", error);
       }
 
-      if (data.data[0].currentBalance < 20000) {
-        try {
-          await sendOrderConfirmationEmail(
-            shipment.packages[0].content,
-            data.data[0].currentBalance
-          );
-        } catch (emailError) {
-          console.error("Error sending email:", emailError);
-        }
-      }
+      // Antes aqui se avisaba por email cuando el saldo de Envia bajaba de
+      // 20000. Ese correo usaba el asunto "creacion de envio fallo", o sea
+      // pareceria un fallo de envio cuando el envio habia funcionado. Se
+      // elimino: el aviso de fallo real sigue siendo el de la rama
+      // `data.error` de mas arriba.
 
       // El geocodificado se enriquece despues: se registra con waitUntil para
       // que Vercel no congele la funcion y la promesa nunca avance.
