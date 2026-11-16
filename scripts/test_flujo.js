@@ -460,6 +460,48 @@ check(
 );
 delete process.env.FEATURE_REPETIR_ESTADO;
 
+console.log("\n== 14) No saludar dos veces ==");
+
+// El caso que reporto el cliente: el bot saluda al pedir el numero y
+// despues vuelve a saludar al darle el estado. Con el codigo en la mano, la
+// respuesta es SOLO el estado.
+r = correr({
+  text: "MON4724",
+  resolved: {
+    shipment: null,
+    orderId: "MON4724",
+    reason: "pedido_sin_envio",
+  },
+});
+check(
+  "el mensaje de estado NO vuelve a saludar",
+  !/gracias por comunicarte/i.test(r.decision.texto || ""),
+  r.decision.texto
+);
+check(
+  "el mensaje de estado empieza con el estado",
+  /^Estado de tu pedido MON4724:/.test(r.decision.texto || ""),
+  r.decision.texto
+);
+check(
+  "ese mensaje sigue reconociendose como del bot",
+  flow.esMensajeDelBot(r.decision.texto || "") === true
+);
+check(
+  "y se puede parsear el estado",
+  (flow.parseEstado(r.decision.texto || "") || {}).orderId === "MON4724"
+);
+
+r = correr({
+  text: "hola, donde esta mi pedido?",
+  resolved: { shipment: null, orderId: null, reason: "sin_datos" },
+});
+check(
+  "el mensaje que PIDE el numero si saluda (una sola vez)",
+  /gracias por comunicarte/i.test(r.decision.texto || ""),
+  r.decision.texto
+);
+
 console.log(
   `\n${pasaron} pasaron, ${fallaron} fallaron\n`
 );

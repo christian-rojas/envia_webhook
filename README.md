@@ -271,7 +271,7 @@ mudo (no responde "hola", ni "ok", ni mensajes sobre el catálogo):
 
 Quien decide es el modelo (x.ai), no el código: si el mensaje no es de esos
 temas responde `NO_RESPUDER` y el bot no envía nada. El tono es el de la marca:
-empieza con *"Hola, gracias por comunicarte con nosotros"* y es amable y juvenil.
+amable y juvenil, con el saludo *"Hola, gracias por comunicarte con nosotros"* **una sola vez** (al pedir el número de pedido). Cuando el cliente ya dio el código, el bot responde directo con el estado y no vuelve a saludar.
 
 ### De dónde sale la información
 

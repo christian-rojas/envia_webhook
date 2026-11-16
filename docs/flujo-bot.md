@@ -38,6 +38,25 @@ El bot hace **solo dos cosas**, y cada una con un criterio de "una vez":
 En cualquier otro caso **se calla**. Y se calla siempre que un asesor humano
 esté hablando con ese cliente.
 
+### El saludo va una sola vez
+
+El bot saluda **una vez**, cuando pide el número de pedido. El mensaje del
+estado **no vuelve a saludar**: si el cliente ya dio el código, la respuesta
+es solo el estado.
+
+```
+cliente:  hola, quiero saber de mi pedido
+bot:      Hola, gracias por comunicarte con nosotros. ¿Cuál es el número de
+          tu pedido? Va en formato MON3007.
+cliente:  MON4724
+bot:      Estado de tu pedido MON4724: en confección.
+          Tu pedido está en confección, en el taller.
+          Estamos revisando la información, nos comunicaremos contigo en breve.
+```
+
+(Antes el bot saludaba en los dos mensajes y el cliente veía "Hola, gracias por
+comunicarte con nosotros" dos veces seguidas.)
+
 Se activa con `FEATURE_BOT_AUTOMATICO=1` (por defecto). Con
 `FEATURE_BOT_AUTOMATICO=0` vuelve el bot viejo con IA (más flexible, pero
 puede repetir respuestas).
@@ -139,7 +158,7 @@ puede resolver sin contexto.
 ## Pruebas
 
 ```sh
-node scripts/test_flujo.js        # 33 tests del flujo
+node scripts/test_flujo.js        # 38 tests del flujo
 node scripts/test_resolucion.js   # 54 tests de resolución de pedidos
 ```
 

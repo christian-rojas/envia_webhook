@@ -415,7 +415,11 @@ function plantillaEstado({ orderId, shipment, fabNotes = {} }) {
   const estado = describirEstado(shipment, fabNotes);
   const lineas = [];
 
-  lineas.push(`${SALUDO}. Estado de tu pedido ${orderId}: ${estado.slug}.`);
+  // SIN saludo a proposito: el bot ya saludo antes (al pedir el numero de
+  // pedido) y volver a poner "Hola, gracias por comunicarte con nosotros"
+  // hacia que el cliente receive el mismo saludo dos veces seguidas. Cuando
+  // ya tenemos el numero, se responde SOLO con el estado.
+  lineas.push(`Estado de tu pedido ${orderId}: ${estado.slug}.`);
 
   // La frase del estado, con la fecha cuando el pedido ya fue entregado.
   if (estado.slug === "entregado" && shipment && shipment.deliveredAt) {

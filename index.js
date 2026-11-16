@@ -1621,6 +1621,17 @@ async function buildReplyContext(resolved, { text = "", greeting = false, candid
     });
   }
 
+  // Cuando ya hay un pedido identificado, se responde DIRECTO con el estado:
+  // sin volver a saludar. Antes el bot saludia en cada mensaje y el cliente
+  // veia "Hola, gracias por comunicarte con nosotros" dos veces seguidas
+  // (una al pedirle el numero y otra al darle el estado).
+  if (resolved.orderId && (resolved.shipment || resolved.reason === "pedido_sin_envio")) {
+    context +=
+      `\n\n(El cliente YA dio el numero de pedido. Responde DIRECTAMENTE con ` +
+      `el estado de su pedido. NO lo saludes: nada de "Hola, gracias por ` +
+      `comunicarte con nosotros".)`;
+  }
+
   // Proceso de fabricacion: se cuenta mientras el paquete no fue retirado.
   // OJO: la variable NO se llama "process" porque sombrearia el global de Node.
   const fabNotes = await getManufacturingNotes(resolved);
