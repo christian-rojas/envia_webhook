@@ -4,7 +4,7 @@ const bodyParser = require("body-parser");
 const cors = require("cors");
 // import fetch from "node-fetch";
 const fetch = (...args) => import("node-fetch").then(({ default: fetch }) => fetch(...args));
-const { sendOrderConfirmationEmail, reverseGeocode } = require("./utils.js");
+const { reverseGeocode } = require("./utils.js");
 const { createClient } = require("@supabase/supabase-js");
 const dotenv = require("dotenv");
 const { saveShipmentData, saveShipmentDataWithEnvia } = require("./supa.js");
@@ -585,18 +585,11 @@ app.post("/webhook/shopify", async (req, res) => {
     if (data.error) {
       console.error("Error creating shipment:", data.error?.message);
 
-      // 1) Aviso por email. Va en su propio try/catch: si el SMTP falla NO
-      //    puede impedir el reintento del envio ni la respuesta del webhook.
-      try {
-        await sendOrderConfirmationEmail(
-          shipment.packages[0].content,
-          data.error?.message ?? "error"
-        );
-      } catch (emailError) {
-        console.error("Error sending email:", emailError);
-      }
+      // Antes aqui se avisaba por email del fallo de Envia. Se elimino: el
+      // fallo queda solo en los logs (console.error de arriba) y el reintento
+      // con servicio "extended" sigue igual.
 
-      // 2) Reintento con servicio "extended".
+      // 1) Reintento con servicio "extended".
       shipment.shipment.service = "extended";
       const responseExtended = await createEnviaShipment(shipment, order);
       if (responseExtended.meta === "generate") {
