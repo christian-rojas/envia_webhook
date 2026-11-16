@@ -288,7 +288,7 @@ const hiloReal = [
   msg({ from: CLIENTE, text: "hola, mi pedido MON4722" }),
   msg({
     from: OUR,
-    text: "Hola, gracias por comunicarte con nosotros. Estado de tu pedido MON4722: en confección.\nEstamos revisando la información, nos comunicaremos contigo en breve.",
+    text: "Hola, gracias por comunicarte con nosotros. Estado de tu pedido MON4722: en confección.",
   }),
   msg({ from: CLIENTE, text: "Sí" }),
 ];
@@ -320,10 +320,9 @@ r = correr({
 });
 check("responde el estado sin envio", r.decision.accion === "estado", r.decision.accion);
 check(
-  "dice la frase obligatoria sin seguimiento",
-  /Estamos revisando la información, nos comunicaremos contigo en breve/.test(
-    r.decision.texto || ""
-  ),
+  "dice el estado sin la frase de 'revisando la informacion'",
+  /Estado de tu pedido MON4722: en confección/.test(r.decision.texto || "") &&
+    !/revisando la informaci/i.test(r.decision.texto || ""),
   r.decision.texto
 );
 
@@ -391,11 +390,9 @@ r = correr({
   },
 });
 check(
-  "sin etiqueta dice 'en confección' y la frase de revisar",
+  "sin etiqueta dice 'en confección' y no promete aviso",
   /Estado de tu pedido MON4687: en confección/.test(r.decision.texto || "") &&
-    /Estamos revisando la información, nos comunicaremos contigo en breve/.test(
-      r.decision.texto || ""
-    ),
+    !/revisando la informaci/i.test(r.decision.texto || ""),
   r.decision.texto
 );
 

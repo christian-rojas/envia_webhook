@@ -57,10 +57,6 @@ const TEXTO_ASESOR =
   "Te paso con un asesor de Mondano que te va a ayudar. " +
   "Puedes contactarnos también al +56 9 9689 1362 o por contacto@mondano.cl";
 
-/** Frase obligatoria cuando el pedido aun no tiene numero de seguimiento. */
-const FRASE_SIN_SEGUIMIENTO =
-  "Estamos revisando la información, nos comunicaremos contigo en breve.";
-
 /**
  * Cuanto tiempo se recuerda en memoria lo que ya se le respondio a cada
  * cliente. Es una red de seguridad para cuando la Graph API va lenta y el
@@ -443,10 +439,13 @@ function plantillaEstado({ orderId, shipment, fabNotes = {} }) {
     lineas.push(`Número de seguimiento: ${shipment.trackingNumber}`);
     if (shipment.carrier) lineas.push(`Transportista: ${shipment.carrier}`);
     if (shipment.trackUrl) lineas.push(`Puedes seguirlo aquí: ${shipment.trackUrl}`);
-  } else if (estado.slug === "en confección") {
-    // Todavia no hay numero de seguimiento: hay que decirlo textual.
-    lineas.push(FRASE_SIN_SEGUIMIENTO);
   }
+
+  // OJO: antes, cuando el pedido aun no tenia numero de seguimiento, se
+  // añadia "Estamos revisando la informacion, nos comunicaremos contigo en
+  // breve". Esa frase prometa una accion que el bot no cumple (nadie le
+  // escribe despues) y hacia que el cliente esperara una notificacion que
+  // nunca llegaba. Se elimino: el bot dice solo en que estado esta.
 
   return lineas.join("\n");
 }
@@ -757,7 +756,6 @@ module.exports = {
   MARCA_PEDIR,
   MARCA_ESTADO,
   TEXTO_ASESOR,
-  FRASE_SIN_SEGUIMIENTO,
   CACHE_TTL_MS,
   VIGENCIA_ASESOR_MS,
   normalizar,

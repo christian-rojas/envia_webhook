@@ -1610,9 +1610,8 @@ async function buildReplyContext(resolved, { text = "", greeting = false, candid
       `El pedido ${resolved.orderId} EXISTE, pero todavia NO tiene un envio ` +
       `generado: sigue en proceso en el taller. No le digas que no lo ` +
       `encontramos. NO le preguntes si le enviamos el numero de seguimiento ` +
-      `ni le digas "estan revisando": si NO hay numero de seguimiento, dile ` +
-      `textualmente "estamos revisando la informacion, nos comunicaremos ` +
-      `contigo en breve" y ofrece pasar con un asesor si es urgente.`;
+      `ni prometas un plazo: dile solo que sigue en el taller y ofrece pasar ` +
+      `con un asesor si es urgente.`;
   } else {
     context = ai.buildMissingDataContext({
       reason: resolved.reason,

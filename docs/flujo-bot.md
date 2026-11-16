@@ -51,11 +51,15 @@ bot:      Hola, gracias por comunicarte con nosotros. ¿Cuál es el número de
 cliente:  MON4724
 bot:      Estado de tu pedido MON4724: en confección.
           Tu pedido está en confección, en el taller.
-          Estamos revisando la información, nos comunicaremos contigo en breve.
 ```
 
 (Antes el bot saludaba en los dos mensajes y el cliente veía "Hola, gracias por
 comunicarte con nosotros" dos veces seguidas.)
+
+Tampoco promete avisos: cuando el pedido todavía no tiene número de
+seguimiento, el bot dice solo en qué estado está. La frase "Estamos revisando
+la información, nos comunicaremos contigo en breve" se eliminó porque
+prometía una notificación que nunca llegaba.
 
 Se activa con `FEATURE_BOT_AUTOMATICO=1` (por defecto). Con
 `FEATURE_BOT_AUTOMATICO=0` vuelve el bot viejo con IA (más flexible, pero
@@ -107,7 +111,7 @@ camino" a "en reparto", etc.).
 
 | slug | Qué pasa |
 |---|---|
-| `en confección` | No tiene etiqueta todavía: sigue en el taller. Se dice textualmente "Estamos revisando la información, nos comunicaremos contigo en breve." |
+| `en confección` | No tiene etiqueta todavía: sigue en el taller. |
 | `preparado` | Ya tiene etiqueta: esperando que la transportista lo retire. |
 | `en camino` | La transportista ya lo recogió. |
 | `en reparto` | Va a ser entregado hoy. |
