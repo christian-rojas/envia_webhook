@@ -27,6 +27,21 @@ const BANDEJA_CACHE_MS = Number(process.env.BANDEJA_CACHE_MS || 60000);
 const MAX_EDAD_HORAS = Number(process.env.BANDEJA_MAX_HORAS || 23);
 
 /**
+ * Ventana para los hilos en los que el bot NUNCA hablo.
+ *
+ * Son las "solicitudes" de Instagram (gente que no sigue la cuenta). Meta da
+ * 7 dias para responderlas: si no, la solicitud se marca como spam y
+ * bloquean al usuario. Por eso aqui la ventana es mas larga que las 24 h
+ * de una conversacion normal.
+ *
+ * OJO: en un hilo donde ya escribio un asesor humano, el bot se calla igual
+ * (lo decide el flujo, no la bandeja).
+ */
+const MAX_EDAD_SOLICITUD_HORAS = Number(
+  process.env.BANDEJA_MAX_HORAS_SOLICITUD || 168
+);
+
+/**
  * Cuantos hilos se revisan en detalle como maximo.
  *
  * Cada detalle es una llamada a la Graph API y el limite de la app es bajo
@@ -89,9 +104,18 @@ async function findUnanswered({ fresh = false } = {}) {
     const texto = String(ultimo.message || "").trim();
     if (!texto) continue;
 
-    // Solo si es reciente (dentro de la ventana de 24 h de Instagram).
+    // ¿Es una solicitud (el bot nunca hablo en este hilo)? Si lo es, la
+    // ventana es la de 7 dias de Meta; si no, la de 24 h de Instagram.
+    const habloElBot = ordenados.some(
+      (m) => String(m.from?.id || "") === String(conversations.OUR_ID)
+    );
+    const limiteHoras = habloElBot
+      ? MAX_EDAD_HORAS
+      : MAX_EDAD_SOLICITUD_HORAS;
+
+    // Solo si es reciente (dentro de la ventana de Instagram).
     const edad = Date.now() - Date.parse(ultimo.created_time || 0);
-    if (!Number.isFinite(edad) || edad > MAX_EDAD_HORAS * 3600 * 1000) continue;
+    if (!Number.isFinite(edad) || edad > limiteHoras * 3600 * 1000) continue;
 
     pendientes.push({
       conversationId: hilo.id,
@@ -103,6 +127,8 @@ async function findUnanswered({ fresh = false } = {}) {
         esNuestro: false,
         esEco: false,
       },
+      // Primer contacto: el bot nunca hablo en este hilo (solicitud).
+      primerContacto: !habloElBot,
     });
   }
 
@@ -138,6 +164,7 @@ function toInboundMessage(mensaje) {
 
 module.exports = {
   MAX_EDAD_HORAS,
+  MAX_EDAD_SOLICITUD_HORAS,
   MAX_HILOS,
   listInboxMessages,
   findUnanswered,

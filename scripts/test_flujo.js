@@ -119,13 +119,16 @@ check(
 
 console.log("\n== 1b) No preguntar si no es del pedido ==");
 
+// Un saludo solo o una pregunta de un producto NO son preguntas de pedido:
+// el bot no pide el numero. En el PRIMER contacto igual contesta (para que la
+// solicitud de Instagram no se pierda), pero en cuanto ya le hablo, se calla.
 r = correr({
   text: "hola",
   resolved: { shipment: null, orderId: null, reason: "sin_datos" },
 });
 check(
   "un saludo solo no pide numero",
-  r.decision.accion === "silencio",
+  r.decision.accion !== "pedir",
   r.decision.accion + " / " + r.decision.motivo
 );
 
@@ -135,6 +138,25 @@ r = correr({
 });
 check(
   "una pregunta de productos no pide numero",
+  r.decision.accion !== "pedir",
+  r.decision.accion + " / " + r.decision.motivo
+);
+
+const hiloYaContestado = [
+  msg({ from: CLIENTE, text: "cuanto cuesta el poleron azul?" }),
+  msg({
+    from: OUR,
+    text: "Hola, gracias por comunicarte con nosotros. ¿En qué te podemos ayudar?",
+  }),
+];
+
+r = correr({
+  text: "cuanto cuesta el poleron azul?",
+  mensajes: hiloYaContestado,
+  resolved: { shipment: null, orderId: null, reason: "sin_datos" },
+});
+check(
+  "una pregunta de productos no se repite si ya contestamos",
   r.decision.accion === "silencio",
   r.decision.accion + " / " + r.decision.motivo
 );
@@ -458,7 +480,6 @@ check(
 delete process.env.FEATURE_REPETIR_ESTADO;
 
 console.log("\n== 14) No saludar dos veces ==");
-
 // El caso que reporto el cliente: el bot saluda al pedir el numero y
 // despues vuelve a saludar al darle el estado. Con el codigo en la mano, la
 // respuesta es SOLO el estado.
@@ -497,6 +518,95 @@ check(
   "el mensaje que PIDE el numero si saluda (una sola vez)",
   /gracias por comunicarte/i.test(r.decision.texto || ""),
   r.decision.texto
+);
+
+console.log("\n== 15) Primer contacto (solicitudes de Instagram) ==");
+
+// Un mensaje de alguien que no sigue la cuenta llega a "solicitudes" y Meta
+// da 7 dias para responder. Antes el bot se callaba y la solicitud se
+// perdia. Ahora contesta UNA vez.
+r = correr({
+  text: "Hola",
+  mensajes: [msg({ from: CLIENTE, text: "Hola" })],
+  resolved: { shipment: null, orderId: null, reason: "sin_datos" },
+});
+check(
+  "un saludo en primer contacto SI se responde",
+  r.decision.accion === "saludar",
+  r.decision.accion + " / " + r.decision.motivo
+);
+check(
+  "el saludo ofrece ayuda",
+  /gracias por comunicarte/i.test(r.decision.texto || "") &&
+    /puedo|ayudar|pásame|dinos/i.test(r.decision.texto || ""),
+  r.decision.texto
+);
+check(
+  "el saludo NO lleva 'formato MON3007' (asi puede pedirlo despues)",
+  !/formato MON3007/i.test(r.decision.texto || ""),
+  r.decision.texto
+);
+check(
+  "el saludo se reconoce como mensaje del bot",
+  flow.esMensajeDelBot(r.decision.texto || "") === true
+);
+
+const hiloConSaludo = [
+  msg({ from: CLIENTE, text: "Hola" }),
+  msg({ from: OUR, text: r.decision.texto || "" }),
+];
+
+r = correr({
+  text: "Hola otra vez",
+  mensajes: hiloConSaludo,
+  resolved: { shipment: null, orderId: null, reason: "sin_datos" },
+});
+check(
+  "no vuelve a saludar en el mismo hilo",
+  r.decision.accion === "silencio",
+  r.decision.accion + " / " + r.decision.motivo
+);
+check(
+  "el analisis marca que el bot ya respondio",
+  r.analisis.respondio === true
+);
+check(
+  "y no lo confunde con un asesor humano",
+  r.analisis.hayAsesor === false
+);
+
+r = correr({
+  text: "hola, donde esta mi pedido?",
+  mensajes: hiloConSaludo,
+  resolved: { shipment: null, orderId: null, reason: "sin_datos" },
+});
+check(
+  "despues del saludo puede pedir el numero de pedido",
+  r.decision.accion === "pedir" && /formato MON3007/.test(r.decision.texto || ""),
+  r.decision.accion + " / " + r.decision.texto
+);
+
+console.log("\n== 16) La cache evita repetir el saludo ==");
+
+const clienteNuevo = "999888777666555";
+let r1 = correr({
+  text: "Hola",
+  mensajes: [],
+  resolved: { shipment: null, orderId: null, reason: "sin_datos" },
+  customerId: clienteNuevo,
+});
+flow.registrar(clienteNuevo, r1.decision.accion, null, "en confección");
+let r2 = correr({
+  text: "Hola de nuevo",
+  mensajes: [],
+  resolved: { shipment: null, orderId: null, reason: "sin_datos" },
+  customerId: clienteNuevo,
+});
+check("primero saluda", r1.decision.accion === "saludar", r1.decision.accion);
+check(
+  "y despues se calla aunque no haya historial",
+  r2.decision.accion === "silencio",
+  r2.decision.accion + " / " + r2.decision.motivo
 );
 
 console.log(

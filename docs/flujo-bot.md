@@ -28,19 +28,45 @@ Tres cosas que pasaba:
 
 ## La regla nueva
 
-El bot hace **solo dos cosas**, y cada una con un criterio de "una vez":
+El bot hace **solo tres cosas**, y cada una con un criterio de "una vez":
 
 | | Cuándo | Qué dice |
 |---|---|---|
-| **1. Pedir el número** | El cliente pregunta por un pedido pero no hay número | "Para revisar tu pedido, ¿me das el número de pedido (formato MON3007)?" |
-| **2. Decir dónde está** | Ya hay número de pedido | "Estado de tu pedido MON4722: en camino." + seguimiento |
+| **1. Saludar** | El cliente escribe y el bot **nunca** le habló en ese hilo | "Hola, gracias por comunicarte con nosotros. ¿En qué te podemos ayudar? Si es un pedido, dinos el número…" |
+| **2. Pedir el número** | El cliente pregunta por un pedido pero no hay número | "Para revisar tu pedido, ¿me das el número de pedido (formato MON3007)?" |
+| **3. Decir dónde está** | Ya hay número de pedido | "Estado de tu pedido MON4722: en camino." + seguimiento |
 
 En cualquier otro caso **se calla**. Y se calla siempre que un asesor humano
 esté hablando con ese cliente.
 
+### Por qué saluda en el primer contacto
+
+Un mensaje de alguien que **no sigue la cuenta** cae en la carpeta de
+**solicitudes** de Instagram, y Meta da **7 días** para responder: si no se
+responde, la solicitud se marca como spam y bloquean al usuario.
+
+Antes el bot se quedaba mudo cuando el mensaje no era sobre un pedido (un
+"hola", una pregunta de un producto) y esas personas se perdían. Ahora, en el
+**primer contacto**, contesta siempre: saluda y pregunta en qué puede ayudar.
+Después sigue callado, que es lo que evita el "bombardeo".
+
+> El saludo de primer contacto **no** lleva "formato MON3007" a propósito:
+> esa frase es la marca de "ya le pedí el número", y si el saludo la llevara
+> el bot nunca más se lo pediría (que es justo lo que necesita si el cliente
+> responde "hola, ¿dónde está mi pedido?").
+
+```
+cliente:  Hola
+bot:      Hola, gracias por comunicarte con nosotros. ¿En qué te podemos
+          ayudar? Si es un pedido, dinos el número y te contamos en qué va.
+cliente:  hola, dónde está mi pedido?
+bot:      Hola, gracias por comunicarte con nosotros. ¿Me pasas el número de
+          tu pedido (formato MON3007) para revisarlo?
+```
+
 ### El saludo va una sola vez
 
-El bot saluda **una vez**, cuando pide el número de pedido. El mensaje del
+El bot saluda **una vez**, al pedir el número de pedido. El mensaje del
 estado **no vuelve a saludar**: si el cliente ya dio el código, la respuesta
 es solo el estado.
 
@@ -95,7 +121,9 @@ Además hay una cache en memoria (6 h) por si la Graph API va lenta y el
    (cambio, devolución, prenda dañada)?    → "Te paso con un asesor…"
 5. ¿No hay número de pedido?
    ├─ ya se lo pedimos antes              → silencio
-   ├─ no pregunta por un pedido           → silencio
+   ├─ no pregunta por un pedido
+   │  ├─ el bot nunca le habló            → saludar (1 vez)
+   │  └─ ya le hablamos                  → silencio
    └─ si                                → pedir el número
 6. ¿El pedido no existe?                  → "no encontramos el pedido X"
 7. ¿Ya le dijimos este mismo estado?      → silencio
@@ -106,6 +134,9 @@ Además hay una cache en memoria (6 h) por si la Graph API va lenta y el
 El punto 7 es el que evita el bombardeo: **el estado se avisa una vez**. Solo
 se vuelve a avisar si *cambió* (de "en confección" a "preparado", de "en
 camino" a "en reparto", etc.).
+
+El punto 5 es el que evita que se pierdan las **solicitudes**: el bot saluda
+una vez a quien le escribe por primera vez, y después se calla.
 
 ## Los estados
 
@@ -162,7 +193,7 @@ puede resolver sin contexto.
 ## Pruebas
 
 ```sh
-node scripts/test_flujo.js        # 38 tests del flujo
+node scripts/test_flujo.js        # 49 tests del flujo
 node scripts/test_resolucion.js   # 54 tests de resolución de pedidos
 ```
 

@@ -324,8 +324,8 @@ Responder a `recipient.id` es mandarse un mensaje a uno mismo.
 ### Pruebas
 - `scripts/test_resolucion.js` — **54 tests** de extracción de pedido/teléfono,
   memoria de conversación, contextos y filtrado de notas.
-- `scripts/test_flujo.js` — **33 tests** del flujo del bot (las 2 respuestas,
-  no repetir, detección de asesor, estados del pedido).
+- `scripts/test_flujo.js` — **49 tests** del flujo del bot (saludo de primer
+  contacto, pedir el número, no repetir, detección de asesor, estados).
 - `scripts/test_conversacion.js` — flujo completo con el handler real y un
   remitente falso (no envía nada a Instagram).
 - `scripts/buscar_notas_manufactura.js` — dónde están las notas de taller.

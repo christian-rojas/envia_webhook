@@ -16,13 +16,27 @@
  *
  * QUE HACE ESTE MODULO
  * --------------------
- * El bot hace SOLO dos cosas, y cada una con un criterio claro de "una vez":
+ * El bot hace SOLO tres cosas, y cada una con un criterio claro de "una vez":
  *
- *   1) PEDIR EL NUMERO DE PEDIDO  (cuando no lo tiene)
- *   2) DECIR DONDE ESTA EL PEDIDO  (cuando ya lo tiene)
+ *   1) SALUDAR EN EL PRIMER CONTACTO  (cuando el cliente escribe y el bot
+ *      nunca le hablo en ese hilo)
+ *   2) PEDIR EL NUMERO DE PEDIDO      (cuando no lo tiene)
+ *   3) DECIR DONDE ESTA EL PEDIDO     (cuando ya lo tiene)
  *
  * En cualquier otro caso se queda mudo. Y se calla siempre que detecte que
  * un asesor humano esta hablando con ese cliente.
+ *
+ * POR QUE SALUDA EN EL PRIMER CONTACTO
+ * ------------------------------------
+ * Un mensaje de alguien que no sigue la cuenta llega a la carpeta de
+ * "solicitudes" de Instagram, y Meta da 7 dias para responder: si no se
+ * responde, la solicitud se marca como spam y bloquean al usuario. Antes el
+ * bot se quedaba mudo cuando el mensaje no era sobre un pedido (un "hola", una
+ * pregunta de un producto) y esas solicitudes se perdian.
+ *
+ * Por eso ahora, en el PRIMER contacto, el bot contesta siempre (una vez):
+ * saluda y pregunta en que puede ayudar. Despues sigue callado, que es lo
+ * que evita el "bombardeo".
  *
  * COMO SE SABE QUE YA SE RESPONDIO
  * ---------------------------------
@@ -52,7 +66,46 @@ const MARCA_PEDIR = "formato mon3007";
 /** Marca de los mensajes del bot que dan el ESTADO de un pedido. */
 const MARCA_ESTADO = "estado de tu pedido mon";
 
-/** Texto que el bot usa para derivar a un asesor. */
+/**
+ * Plantillas para el PRIMER CONTACTO.
+ *
+ * Son las que usa el bot cuando le escriben por primera vez y el mensaje NO
+ * es sobre un pedido (un "hola", una pregunta de un producto). Antes no
+ * contestaba y la solicitud de Instagram se perdia.
+ *
+ * Hay varias porque Instagram penaliza los envios con TEXTO IDENTICO a varios
+ * clientes seguidos. Se elige una segun el cliente, de forma estable.
+ *
+ * OJO: estas NO llevan "formato MON3007" a proposito. Esa frase es la marca
+ * de "ya le pedi el numero de pedido": si el saludo la llevara, el bot nunca
+ * mas le pediria el numero (que es justo lo que necesita si el cliente
+ * responde "hola, donde esta mi pedido?").
+ */
+const PLANTILLAS_PRIMER_CONTACTO = [
+  "Hola, gracias por comunicarte con nosotros. ¿Sobre qué necesitas información? Si es un pedido, pásame el número y te contamos cómo va.",
+  "Hola, gracias por comunicarte con nosotros. ¿En qué te podemos ayudar? Si es un pedido, dinos el número y te contamos en qué va.",
+  "Hola, gracias por comunicarte con nosotros. Te leemos. Si es sobre un pedido, pásame el número para revisarlo.",
+];
+
+/**
+ * Plantilla del primer contacto.
+ *
+ * @param {string} [clienteId] Id del cliente (para variar la frase).
+ * @returns {string} Mensaje para el cliente.
+ */
+function plantillaPrimerContacto(clienteId) {
+  let indice = 0;
+  if (clienteId) {
+    let suma = 0;
+    for (const caracter of String(clienteId)) suma += caracter.charCodeAt(0);
+    indice = suma % PLANTILLAS_PRIMER_CONTACTO.length;
+  }
+  return PLANTILLAS_PRIMER_CONTACTO[indice];
+}
+
+/**
+ * Texto que el bot usa para derivar a un asesor.
+ */
 const TEXTO_ASESOR =
   "Te paso con un asesor de Mondano que te va a ayudar. " +
   "Puedes contactarnos también al +56 9 9689 1362 o por contacto@mondano.cl";
@@ -227,8 +280,10 @@ function analizarHilo(messages, { ourId = NUESTRO_ID, now = Date.now() } = {}) {
     tCliente: null,
     /** El bot ya le pidio el numero de pedido. */
     pidioNumero: false,
-    /** El bot ya lo derivo a un asesor. */
+    /** El bot ya le derivo a un asesor. */
     handoff: false,
+    /** El bot ya le contesto ALGUNA vez en este hilo. */
+    respondio: false,
     /** Estados ya comunicados: { MON4722: "en camino" }. */
     estados: {},
     /**
@@ -260,15 +315,26 @@ function analizarHilo(messages, { ourId = NUESTRO_ID, now = Date.now() } = {}) {
 
     if (pidioNumero(texto)) {
       info.pidioNumero = true;
+      info.respondio = true;
       continue;
     }
     const estado = parseEstado(texto);
     if (estado) {
       info.estados[estado.orderId] = estado.slug;
+      info.respondio = true;
       continue;
     }
     if (esPlantillaAsesor(texto)) {
       info.handoff = true;
+      info.respondio = true;
+      continue;
+    }
+
+    // Cualquier otro mensaje del bot (por ejemplo el saludo de primer
+    // contacto). Sin esto, el saludo se tomaria por un mensaje de un asesor
+    // humano y el bot se quedaria mudo para siempre en ese hilo.
+    if (esMensajeDelBot(texto)) {
+      info.respondio = true;
       continue;
     }
 
@@ -295,7 +361,7 @@ function analizarHilo(messages, { ourId = NUESTRO_ID, now = Date.now() } = {}) {
 // Cache en memoria (red de seguridad)
 // ---------------------------------------------------------------------------
 
-/** @type {Map<string, {at: number, pidioNumero: boolean, handoff: boolean, estados: object}>} */
+/** @type {Map<string, {at: number, pidioNumero: boolean, handoff: boolean, respondio: boolean, estados: object}>} */
 const cache = new Map();
 
 /**
@@ -307,11 +373,23 @@ const cache = new Map();
 function leerCache(key) {
   const guardado = cache.get(key);
   if (!guardado) {
-    return { pidioNumero: false, handoff: false, estados: {}, orderId: null };
+    return {
+      pidioNumero: false,
+      handoff: false,
+      respondio: false,
+      estados: {},
+      orderId: null,
+    };
   }
   if (Date.now() - guardado.at > CACHE_TTL_MS) {
     cache.delete(key);
-    return { pidioNumero: false, handoff: false, estados: {}, orderId: null };
+    return {
+      pidioNumero: false,
+      handoff: false,
+      respondio: false,
+      estados: {},
+      orderId: null,
+    };
   }
   return guardado;
 }
@@ -329,6 +407,7 @@ function guardarCache(key, patch) {
     at: Date.now(),
     pidioNumero: anterior.pidioNumero || !!patch.pidioNumero,
     handoff: anterior.handoff || !!patch.handoff,
+    respondio: anterior.respondio || !!patch.respondio,
     estados: { ...anterior.estados, ...(patch.estados || {}) },
     orderId: patch.orderId || anterior.orderId || null,
   });
@@ -591,10 +670,13 @@ function decidir({
   resolved = {},
   fabNotes = {},
 }) {
-  const cacheado = customerId ? leerCache(customerId) : { pidioNumero: false, handoff: false, estados: {} };
+  const cacheado = customerId
+    ? leerCache(customerId)
+    : { pidioNumero: false, handoff: false, respondio: false, estados: {} };
 
   const pidioNumero = analisis.pidioNumero || cacheado.pidioNumero;
   const handoff = analisis.handoff || cacheado.handoff;
+  const respondio = analisis.respondio || cacheado.respondio;
   const estados = { ...cacheado.estados, ...(analisis.estados || {}) };
 
   // 1) Un asesor esta hablando con este cliente: el bot se calla.
@@ -624,7 +706,9 @@ function decidir({
 
   // 3) No hay pedido: se pide el numero (una sola vez), pero solo si el
   //    cliente esta preguntando por un pedido. Si pregunta otra cosa
-  //    (un producto, un saludo, un comentario), el bot se calla.
+  //    (un producto, un saludo, un comentario) y es el PRIMER contacto, se
+  //    saluda y se pregunta en que se puede ayudar (una vez): si no, la
+  //    solicitud de Instagram se pierde. Si el bot ya le hablo, se calla.
   if (!orderId) {
     if (pidioNumero) {
       return {
@@ -634,10 +718,17 @@ function decidir({
       };
     }
     if (!sobrePedido(text)) {
+      if (!respondio) {
+        return {
+          accion: "saludar",
+          texto: plantillaPrimerContacto(customerId),
+          motivo: "primer contacto: no es sobre un pedido",
+        };
+      }
       return {
         accion: "silencio",
         texto: null,
-        motivo: "no pregunta por un pedido",
+        motivo: "no pregunta por un pedido (y ya le contestamos)",
       };
     }
     return {
@@ -741,12 +832,19 @@ function decidir({
  */
 function registrar(customerId, accion, orderId, slug) {
   if (!customerId) return;
-  if (accion === "pedir") {
-    guardarCache(customerId, { pidioNumero: true });
+  if (accion === "saludar") {
+    // El bot ya contesto: no vuelve a saludar en este hilo.
+    guardarCache(customerId, { respondio: true });
+  } else if (accion === "pedir") {
+    guardarCache(customerId, { pidioNumero: true, respondio: true });
   } else if (accion === "asesor") {
-    guardarCache(customerId, { handoff: true });
+    guardarCache(customerId, { handoff: true, respondio: true });
   } else if (accion === "estado" && orderId && slug) {
-    guardarCache(customerId, { estados: { [orderId]: slug }, orderId });
+    guardarCache(customerId, {
+      estados: { [orderId]: slug },
+      orderId,
+      respondio: true,
+    });
   }
 }
 
@@ -767,7 +865,9 @@ module.exports = {
   describirEstado,
   plantillaEstado,
   plantillaPedirNumero,
+  plantillaPrimerContacto,
   PLANTILLAS_PEDIR,
+  PLANTILLAS_PRIMER_CONTACTO,
   pideAsesor,
   sobrePedido,
   repetirEstado,

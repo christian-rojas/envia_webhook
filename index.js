@@ -1793,6 +1793,7 @@ async function handleInstagramFlow(message, sender) {
     const sabemosAlgo =
       cacheado.pidioNumero ||
       cacheado.handoff ||
+      cacheado.respondio ||
       Object.keys(cacheado.estados || {}).length > 0;
 
     if (!sabemosAlgo && !orders.extractOrderId(text)) {
