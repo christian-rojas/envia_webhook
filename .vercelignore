@@ -1,0 +1,17 @@
+# Lo que se sube a Vercel. El CLI NO respeta el .gitignore, asi que sin este
+# archivo los .env con secretos (SHOPIFY_SECRET, ENVIA_API_KEY, ZOHO, etc.)
+# quedan guardados en el source del deployment.
+.env
+.env.*
+*.bak
+*.local
+
+# Restos de desarrollo (estan en el .gitignore, pero el CLI los subia igual).
+main.js
+main-test.js
+test.js
+twillio.js
+example.json.json
+mcp-whatsapp-token.json
+meta-oauth-token.json
+docs/mcp-whatsapp-token.json
