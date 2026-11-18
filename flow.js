@@ -108,7 +108,7 @@ function plantillaPrimerContacto(clienteId) {
  */
 const TEXTO_ASESOR =
   "Te paso con un asesor de Mondano que te va a ayudar. " +
-  "Puedes contactarnos también al +56 9 9689 1362 o por contacto@mondano.cl";
+  "Puedes contactarnos también al +56 9 2977 3980 o por contacto@mondano.cl";
 
 /**
  * Cuanto tiempo se recuerda en memoria lo que ya se le respondio a cada

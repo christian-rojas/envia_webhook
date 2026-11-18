@@ -1147,7 +1147,7 @@ async function handleInboundMessage(message, sender = meta.sendTextMessage) {
     await sender(
       from,
       "Te paso con un asesor de Mondano que te va a ayudar. " +
-        "Puedes contactarnos también al +56 9 9689 1362 o por contacto@mondano.cl"
+        "Puedes contactarnos también al +56 9 2977 3980 o por contacto@mondano.cl"
     );
     console.log("[meta] escalado a humano por intencion explicita");
     return;
@@ -1899,7 +1899,7 @@ async function handleInstagramMessage(message, sender) {
     await sender(
       message.customerId,
       "Te paso con un asesor de Mondano que te va a ayudar. " +
-        "Puedes contactarnos también al +56 9 9689 1362 o por contacto@mondano.cl"
+        "Puedes contactarnos también al +56 9 2977 3980 o por contacto@mondano.cl"
     );
     console.log("[instagram] escalado a humano por intencion explicita");
     return;
