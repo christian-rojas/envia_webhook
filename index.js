@@ -890,10 +890,10 @@ app.get("/health", async (req, res) => {
       // (descripciones con la tabla de medidas de cada prenda).
       politica_cambios: policy
         ? `cargada (${policy.length} chars)`
-        : "sin leer (falta scope read_content en la app de Shopify)",
+        : `sin leer (${shopify.getUltimoErrorAdmin() || "falta scope read_content en la app de Shopify"})`,
       guia_tallas: guide.imagen
         ? `cargada (imagen ${guide.imagen.split("/").pop().slice(0, 40)})`
-        : "sin leer (falta scope read_content en la app de Shopify)",
+        : `sin leer (${shopify.getUltimoErrorAdmin() || "falta scope read_content en la app de Shopify"})`,
     },
   });
 });

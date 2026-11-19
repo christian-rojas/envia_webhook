@@ -36,12 +36,48 @@ const SHOPIFY_SHOP = process.env.SHOPIFY_SHOP || "mondano-chile";
 const API_VERSION = process.env.SHOPIFY_API_VERSION || "2026-10";
 const REQUEST_TIMEOUT_MS = Number(process.env.SHOPIFY_TIMEOUT_MS || 20000);
 
-// Cache del token: { token, expiresAt, scope }
+// Cache del token: { token, expiresAt, scope, de }
 let tokenCache = null;
+
+// Ultimo error de la Admin API. Antes, cuando el secret estaba vencido, el
+// bot caia en silencio (las politicas y la guia de tallas salian vacias) y
+// el diagnostico de /health echaba la culpa a un scope que no era el
+// problema. Con esto el error real se ve.
+let ultimoErrorAdmin = null;
 
 // Cache de pedidos: Map<nombre, { order, savedAt }>
 const orderCache = new Map();
 const ORDER_CACHE_MS = Number(process.env.SHOPIFY_ORDER_CACHE_MS || 60000);
+
+/**
+ * Pares de credenciales de la Admin API disponibles, en orden de preferencia.
+ *
+ * Shopify caduca el secret cuando se regenera en el panel del app. Como
+ * aqui conviven SHOPIFY_CLIENT_* (la app que usa el bot) y
+ * SHOPIFY_ADMIN_CLIENT_* (la app de admin), se prueban ambos y se recuerda
+ * el que responde: antes, con un secret vencido el bot se caia entero
+ * (pedidos, catalogo, politicas y guia de tallas).
+ *
+ * @returns {Array<{id: string, secret: string, de: string}>}
+ */
+function paresCredenciales() {
+  const pares = [];
+  if (process.env.SHOPIFY_ADMIN_CLIENT_ID && process.env.SHOPIFY_ADMIN_CLIENT_SECRET) {
+    pares.push({
+      id: process.env.SHOPIFY_ADMIN_CLIENT_ID,
+      secret: process.env.SHOPIFY_ADMIN_CLIENT_SECRET,
+      de: "SHOPIFY_ADMIN_CLIENT_*",
+    });
+  }
+  if (process.env.SHOPIFY_CLIENT_ID && process.env.SHOPIFY_CLIENT_SECRET) {
+    pares.push({
+      id: process.env.SHOPIFY_CLIENT_ID,
+      secret: process.env.SHOPIFY_CLIENT_SECRET,
+      de: "SHOPIFY_CLIENT_*",
+    });
+  }
+  return pares;
+}
 
 /**
  * Pide (o renueva) el access token de la Admin API.
@@ -59,44 +95,62 @@ async function getAccessToken({ force = false } = {}) {
     return tokenCache.token;
   }
 
-  const clientId = process.env.SHOPIFY_CLIENT_ID;
-  const clientSecret = process.env.SHOPIFY_CLIENT_SECRET;
-
-  if (!clientId || !clientSecret) {
+  const pares = paresCredenciales();
+  if (!pares.length) {
     throw new Error(
       "SHOPIFY_CLIENT_ID y SHOPIFY_CLIENT_SECRET no estan configurados"
     );
   }
 
-  const response = await fetch(
-    `https://${SHOPIFY_SHOP}.myshopify.com/admin/oauth/access_token`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "client_credentials",
-        client_id: clientId,
-        client_secret: clientSecret,
-      }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    }
-  );
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(
-      `Shopify token error ${response.status}: ${detail.slice(0, 200)}`
-    );
+  // Si ya sabemos que par funciona, se prueba primero ese.
+  if (tokenCache && tokenCache.de) {
+    pares.sort((a, b) => (a.de === tokenCache.de ? -1 : b.de === tokenCache.de ? 1 : 0));
   }
 
-  const data = await response.json();
-  tokenCache = {
-    token: data.access_token,
-    expiresAt: Date.now() + (Number(data.expires_in) || 86400) * 1000,
-    scope: data.scope || null,
-  };
-  console.log(`[shopify] token renovado (scopes: ${tokenCache.scope})`);
-  return tokenCache.token;
+  let ultimoError = null;
+  for (const par of pares) {
+    try {
+      const response = await fetch(
+        `https://${SHOPIFY_SHOP}.myshopify.com/admin/oauth/access_token`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            grant_type: "client_credentials",
+            client_id: par.id,
+            client_secret: par.secret,
+          }),
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        }
+      );
+
+      if (!response.ok) {
+        const detail = await response.text().catch(() => "");
+        ultimoError = `Shopify token error ${response.status} (${par.de}): ${detail.slice(0, 120)}`;
+        ultimoErrorAdmin = ultimoError;
+        console.warn(`[shopify] ${par.de} no sirvio: ${response.status}`);
+        continue;
+      }
+
+      const data = await response.json();
+      tokenCache = {
+        token: data.access_token,
+        expiresAt: Date.now() + (Number(data.expires_in) || 86400) * 1000,
+        scope: data.scope || null,
+        de: par.de,
+      };
+      console.log(
+        `[shopify] token renovado con ${par.de} (scopes: ${tokenCache.scope})`
+      );
+      return tokenCache.token;
+    } catch (error) {
+      ultimoError = `${par.de}: ${error.message}`;
+      ultimoErrorAdmin = ultimoError;
+      console.warn(`[shopify] fallo pidiendo token con ${par.de}: ${error.message}`);
+    }
+  }
+
+  throw new Error(ultimoErrorAdmin || ultimoError || "no se pudo obtener un token de Shopify");
 }
 
 /**
@@ -311,7 +365,11 @@ async function graphql(query, variables = {}, { signal } = {}) {
 
   const data = await response.json().catch(() => ({}));
   if (data.errors) {
-    throw new Error(`Shopify GraphQL: ${JSON.stringify(data.errors).slice(0, 250)}`);
+    const err = new Error(
+      `Shopify GraphQL: ${JSON.stringify(data.errors).slice(0, 250)}`
+    );
+    ultimoErrorAdmin = err.message;
+    throw err;
   }
   return data.data || {};
 }
@@ -785,7 +843,7 @@ async function getProductSizeTable(titulo) {
         nodes { title bodyHtml }
       }
     }`;
-    const data = await graphql(query, { title: `title:*${titulo}*` });
+    const data = await graphql(query, { title: `title:*${titulo}* status:active` });
     const node = data.products?.nodes?.[0];
     if (!node?.bodyHtml) return vacio;
 
@@ -831,79 +889,12 @@ const STOPWORDS = new Set([
 ]);
 
 /**
- * Busca productos por nombre en el catalogo.
- *
- * Se usa cuando el cliente pregunta por una prenda concreta ("el poleron
- * azul", "la parka jackdaw"). Se prueban las palabras largas del mensaje
- * como termino de busqueda.
- *
- * @param {string} texto Mensaje del cliente.
- * @returns {Promise<object[]>} [{ titulo, precio, tallas, link, imagenTalla }]
+ * NOTA: existia antes una version de searchProducts() aqui, que buscaba en
+ * la API de Shopify palabra por palabra ("title:*poleron*"). Quedaba tapada
+ * por la version de mas abajo (que usa el catalogo local en memoria), asi
+ * que era codigo muerto: nunca se ejecuto. Se elimino para que no vuelva
+ * a colarse una consulta sin el filtro status:active (que traia borradores).
  */
-async function searchProducts(texto) {
-  const palabras = String(texto || "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .split(/[^a-z0-9]+/)
-    .filter((w) => w.length >= 5 && !STOPWORDS.has(w))
-    .slice(0, 3);
-
-  if (!palabras.length) return [];
-
-  const vistos = new Set();
-  const resultados = [];
-
-  for (const palabra of palabras) {
-    try {
-      const data = await graphql(
-        `query ($q: String!) {
-          products(first: 4, query: $q) {
-            nodes {
-              title
-              handle
-              productType
-              featuredImage { url }
-              variants(first: 20) { nodes { title price } }
-            }
-          }
-        }`,
-        { q: `title:*${palabra}*` }
-      );
-
-      for (const node of data.products?.nodes || []) {
-        if (vistos.has(node.title)) continue;
-        vistos.add(node.title);
-
-        const tallas = (node.variants?.nodes || [])
-          .map((v) => (v.title || "").split(" / ")[0])
-          .filter((t) => t && t.toLowerCase() !== "default title")
-          .filter((t, i, arr) => arr.indexOf(t) === i);
-
-        const precio = node.variants?.nodes?.[0]?.price;
-
-        resultados.push({
-          titulo: node.title,
-          tipo: node.productType || null,
-          precio: precio ? Math.round(Number(precio) / 100) : null,
-          tallas,
-          link: `https://mondano.cl/products/${node.handle}`,
-          imagen: node.featuredImage?.url || null,
-        });
-
-        // La tabla de medidas va en la descripcion.
-        const tabla = await getProductSizeTable(node.title);
-        if (tabla.imagen) resultados[resultados.length - 1].imagenTalla = tabla.imagen;
-        if (tabla.texto) resultados[resultados.length - 1].tablaMedidas = tabla.texto;
-      }
-    } catch (error) {
-      console.warn("[shopify] busqueda de productos fallo:", error.message);
-    }
-  }
-
-  console.log(`[shopify] productos encontrados: ${resultados.length}`);
-  return resultados.slice(0, 4);
-}
 
 
 // ---------------------------------------------------------------------------
@@ -948,9 +939,13 @@ async function getCatalogIndex({ fresh = false } = {}) {
 
   let masPaginas = true;
   while (masPaginas && paginas < 10) {
+    // Solo productos ACTIVOS: hay 72 borradores en la tienda y si entran al
+    // catalogo el bot ofrece prendas que no estan a la venta (y con precio
+    // viejo). Los borradores no aparecen en el feed de Google ni en el
+    // sitemap, asi que tampoco deben aparecer en el chat.
     const data = await graphql(
       `query ($after: String) {
-        products(first: 100, after: $after) {
+        products(first: 100, after: $after, query: "status:active") {
           nodes {
             title
             handle
@@ -1082,6 +1077,9 @@ module.exports = {
   getPolicyText,
   getSizeGuideText,
   getSizeGuide,
+  getUltimoErrorAdmin() {
+    return ultimoErrorAdmin;
+  },
   getProductSizeTable,
   searchProducts,
   getCatalogIndex,
