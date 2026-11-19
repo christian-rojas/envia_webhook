@@ -116,18 +116,8 @@ const ENVIO = fs.readFileSync("/tmp/politica_envio.html", "utf8");
     console.log("  " + tipo.padEnd(18) + (ue && ue.length ? "ERROR " + JSON.stringify(ue) : "OK (" + body.length + " chars)"));
   }
 
-  // ---------------------------------------------------------------- 3) coleccion duplicada
-  console.log("\n=== 3) despublicar la coleccion duplicada ===");
-  const jc = await gql(`{ collections(first: 60) { nodes { id handle title } } }`);
-  const col = ((jc && jc.collections.nodes) || []).find((c) => c.handle === "dia-de-la-madre-1");
-  if (col) {
-    const r = await fetch(A + `/collections/${col.id}.json`, {
-      method: "PUT",
-      headers: H,
-      body: JSON.stringify({ collection: { id: col.id, published: false } }),
-    });
-    console.log("  dia-de-la-madre-1 -> HTTP " + r.status + " " + (await r.text()).slice(0, 140).replace(/\s+/g, " "));
-  } else {
-    console.log("  (no se encontro la coleccion por handle)");
-  }
+  // ---------------------------------------------------------------- 3) coleccion
+  // No se puede despublicar por API: no existe el scope write_collections.
+  // La coleccion dia-de-la-madre-1 ya tiene noindex en el tema, asi que no
+  // compite en el indice. Despublicarla es una tarea del admin.
 })();
