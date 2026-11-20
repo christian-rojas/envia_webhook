@@ -1,0 +1,527 @@
+[
+ {
+  "handle": "purple-urban-windbreaker",
+  "title": "Cortaviento - Purple Urban",
+  "color": "multicolor"
+ },
+ {
+  "handle": "fuchsia-urban-windbreaker",
+  "title": "Cortaviento - Fuchsia Urban",
+  "color": "multicolor"
+ },
+ {
+  "handle": "cortaviento-pistachio-spring-trend",
+  "title": "Cortaviento - Pistachio Spring Trend",
+  "color": "multicolor"
+ },
+ {
+  "handle": "cortaviento-orange-spring-trend",
+  "title": "Cortaviento - Orange Spring Trend",
+  "color": "multicolor"
+ },
+ {
+  "handle": "cortaviento-purple-spring-trend",
+  "title": "Cortaviento - Purple Spring Trend",
+  "color": "multicolor"
+ },
+ {
+  "handle": "parka-jackdaw",
+  "title": "Parka - Impermeable Térmica Jackdaw",
+  "color": "multicolor"
+ },
+ {
+  "handle": "parka-lenadora-flags",
+  "title": "Parka - Impermeable Leñadora Flags",
+  "color": "burgundy"
+ },
+ {
+  "handle": "poleron-belair",
+  "title": "Polerón - Unisex - Belair de Franela",
+  "color": "multicolor"
+ },
+ {
+  "handle": "parka-allianz",
+  "title": "Parka - Impermeable Leñadora ALLIANZ",
+  "color": "multicolor"
+ },
+ {
+  "handle": "parka-impermeable-rainproof-purple",
+  "title": "Parka - Impermeable Térmica Rainproof Purple",
+  "color": "purple"
+ },
+ {
+  "handle": "parka-impermeable-urban",
+  "title": "Parka - Impermeable Térmica Marquam Peak",
+  "color": "black"
+ },
+ {
+  "handle": "poleron-icon",
+  "title": "Polerón - Unisex - ICON",
+  "color": "multicolor"
+ },
+ {
+  "handle": "poleron-hoodie-morado",
+  "title": "Polerón - Unisex - Hoodie Morado",
+  "color": "purple"
+ },
+ {
+  "handle": "poleron-hoodie-yellow",
+  "title": "Polerón - Unisex - Hoodie Yellow",
+  "color": "yellow"
+ },
+ {
+  "handle": "poleron-urban-personality",
+  "title": "Polerón - Unisex - URBAN PERSONALITY",
+  "color": "multicolor"
+ },
+ {
+  "handle": "parka-new-jackdaw",
+  "title": "Parka - New Jackdaw Taslan Impermeable",
+  "color": "multicolor"
+ },
+ {
+  "handle": "casaca-capucha-poleron",
+  "title": "Casaca - Impermeable con Capucha de Polerón",
+  "color": "multicolor"
+ },
+ {
+  "handle": "casaca-mondano-collor",
+  "title": "Casaca - Impermeable Collor con Forro Thermaflecee",
+  "color": "multicolor"
+ },
+ {
+  "handle": "poleron-urban-identity",
+  "title": "Polerón - Unisex - URBAN IDENTITY",
+  "color": "multicolor"
+ },
+ {
+  "handle": "poleron-mondano-trend",
+  "title": "Polerón - Unisex - MONDANO TREND",
+  "color": "multicolor"
+ },
+ {
+  "handle": "poleron-mondano-orange",
+  "title": "Polerón - Unisex - MONDANO ORANGE",
+  "color": "orange"
+ },
+ {
+  "handle": "poleron-mondano-green",
+  "title": "Polerón - Unisex - MONDANO GREEN",
+  "color": "green"
+ },
+ {
+  "handle": "crop-top-naranja",
+  "title": "Polerón - Unisex - CROP TOP NARANJA",
+  "color": "orange"
+ },
+ {
+  "handle": "poleron-crop-top-fucsia",
+  "title": "Polerón - Unisex - CROP TOP FUCSIA",
+  "color": "pink"
+ },
+ {
+  "handle": "poleron-crop-top-amarillo",
+  "title": "Polerón - Unisex - CROP TOP AMARILLO",
+  "color": "yellow"
+ },
+ {
+  "handle": "poleron-casual",
+  "title": "Polerón - Unisex - CASUAL",
+  "color": "multicolor"
+ },
+ {
+  "handle": "conjunto-casual",
+  "title": "Conjunto - Unisex - CASUAL",
+  "color": "multicolor"
+ },
+ {
+  "handle": "poleron-multicolor",
+  "title": "Polerón - Unisex - MULTICOLOR",
+  "color": "multicolor"
+ },
+ {
+  "handle": "conjunto-multicolor",
+  "title": "Conjunto - Unisex - MULTICOLOR",
+  "color": "multicolor"
+ },
+ {
+  "handle": "new-colorful",
+  "title": "Polerón - Unisex - NEW COLORFUL",
+  "color": "multicolor"
+ },
+ {
+  "handle": "conjunto-multicolor-1",
+  "title": "Conjunto - Unisex - NEW COLORFUL",
+  "color": "multicolor"
+ },
+ {
+  "handle": "poleron-bard-evolution",
+  "title": "Polerón - Unisex - BARD EVOLUTION",
+  "color": "multicolor"
+ },
+ {
+  "handle": "parka-ruster",
+  "title": "Parka - Térmica Impermeable Ruster",
+  "color": "multicolor"
+ },
+ {
+  "handle": "cortaviento-ashes",
+  "title": "Cortaviento - Repelente al Agua ASHES",
+  "color": "black"
+ },
+ {
+  "handle": "cortaviento-women-crop-lavender",
+  "title": "Cortaviento - CROP LAVENDER",
+  "color": "purple"
+ },
+ {
+  "handle": "cortaviento-women-crop-pinkadelic",
+  "title": "Cortaviento - CROP PINKADELIC",
+  "color": "multicolor"
+ },
+ {
+  "handle": "cortaviento-color-block-expedition",
+  "title": "Cortaviento - COLOR BLOCK EXPEDITION",
+  "color": "multicolor"
+ },
+ {
+  "handle": "poleron-kangaru",
+  "title": "Polerón - Unisex - KANGARU",
+  "color": "multicolor"
+ },
+ {
+  "handle": "poleron-adventure",
+  "title": "Polerón - Unisex - ADVENTURE",
+  "color": "black"
+ },
+ {
+  "handle": "poleron-sunflower",
+  "title": "Polerón - Unisex - SUNFLOWER",
+  "color": "multicolor"
+ },
+ {
+  "handle": "parka",
+  "title": "Parka - Lynn Térmica Impermeable",
+  "color": "black"
+ },
+ {
+  "handle": "poleron-1",
+  "title": "Polerón - Unisex - BLAZE de Franela",
+  "color": "multicolor"
+ },
+ {
+  "handle": "parka-acorchada-sin-mangas",
+  "title": "Parka - ACORCHADA SIN MANGAS",
+  "color": "blue"
+ },
+ {
+  "handle": "chiporro-brown",
+  "title": "Abrigo de Chiporro con Forro Fleece CREAM",
+  "color": "beige"
+ },
+ {
+  "handle": "casaca-o-parka-iconic-yellow",
+  "title": "Casaca/Parka - ICONIC YELLOW",
+  "color": "yellow"
+ },
+ {
+  "handle": "casaca-o-parka-iconic-purple",
+  "title": "Casaca/Parka - ICONIC PURPLE",
+  "color": "purple"
+ },
+ {
+  "handle": "casaca-o-parka-iconic-pink",
+  "title": "Casaca/Parka - ICONIC PINK",
+  "color": "pink"
+ },
+ {
+  "handle": "casaca-o-parka-iconic-calypso",
+  "title": "Casaca/Parka - ICONIC CALYPSO",
+  "color": "blue"
+ },
+ {
+  "handle": "casaca-o-parka-colour-block",
+  "title": "Casaca/Parka - COLOUR BLOCK",
+  "color": "multicolor"
+ },
+ {
+  "handle": "cortavientos-trail-traveler",
+  "title": "Cortaviento - Trail Traveler",
+  "color": "multicolor"
+ },
+ {
+  "handle": "poleron-manga-murcielago-exclusive",
+  "title": "Polerón - Unisex - Manga Murciélago Exclusive",
+  "color": "multicolor"
+ },
+ {
+  "handle": "pistachio-beach-windbreaker",
+  "title": "Cortaviento - Pistachio Beach",
+  "color": "multicolor"
+ },
+ {
+  "handle": "vestido-tirantes-full-colors",
+  "title": "Vestido - TIRANTES FULL COLORS",
+  "color": "multicolor"
+ },
+ {
+  "handle": "conjunto-abstract-flowers",
+  "title": "Conjunto - ABSTRACT FLOWERS",
+  "color": "multicolor"
+ },
+ {
+  "handle": "vestido-animal-print",
+  "title": "Vestido de Punto Estampado Animal Print",
+  "color": "multicolor"
+ },
+ {
+  "handle": "parka-winter-mountain",
+  "title": "Parka - Térmica Impermeable Winter Mountain",
+  "color": "multicolor"
+ },
+ {
+  "handle": "conjunto-cargo-wind",
+  "title": "Conjunto - Unisex - Cargo Wind",
+  "color": "blue"
+ },
+ {
+  "handle": "conjunto-crop-top",
+  "title": "Conjunto - Unisex - Crop Top con Pantalón Wide Leg",
+  "color": "beige"
+ },
+ {
+  "handle": "poleron-urban",
+  "title": "Polerón - Unisex - Urban",
+  "color": "multicolor"
+ },
+ {
+  "handle": "cortaviento-vintage-1",
+  "title": "Cortaviento - Impermeable Vintage",
+  "color": "multicolor"
+ },
+ {
+  "handle": "poleron-nostalgic",
+  "title": "Polerón - Unisex - Nostalgic",
+  "color": "multicolor"
+ },
+ {
+  "handle": "poleron-canguro-azul",
+  "title": "Polerón - Unisex - Canguro Azul",
+  "color": "blue"
+ },
+ {
+  "handle": "poleron-blue-colors",
+  "title": "Polerón - Unisex - Blue Colors",
+  "color": "blue"
+ },
+ {
+  "handle": "casaca-impermeable-wintertrainer",
+  "title": "Casaca - Impermeable Térmica Wintertrainer",
+  "color": "multicolor"
+ },
+ {
+  "handle": "vestido-punto-coquette",
+  "title": "Vestido de Punto Elástico Coquette",
+  "color": "beige"
+ },
+ {
+  "handle": "poleron-autumn-urban-fashion",
+  "title": "Polerón - Unisex - AUTUMN URBAN FASHION",
+  "color": "black"
+ },
+ {
+  "handle": "poleron-autumn-pistachio",
+  "title": "Polerón - Unisex - AUTUMN PISTACHIO",
+  "color": "multicolor"
+ },
+ {
+  "handle": "poleron-black-colors",
+  "title": "Polerón - Unisex - BLACK COLORS",
+  "color": "black"
+ },
+ {
+  "handle": "parka-winter-mosaic",
+  "title": "Parka - Impermeable Térmica Winter Mosaic",
+  "color": "multicolor"
+ },
+ {
+  "handle": "poleron-autumn-urban-fashion-blue",
+  "title": "Polerón - Unisex - AUTUMN URBAN FASHION BLUE",
+  "color": "blue"
+ },
+ {
+  "handle": "wind-jacket",
+  "title": "Casaca - Impermeable Wind Jacket",
+  "color": "multicolor"
+ },
+ {
+  "handle": "poleron-mike-celeste",
+  "title": "Polerón - Unisex - MIKE CELESTE",
+  "color": "light blue"
+ },
+ {
+  "handle": "poleron-mike-rosado",
+  "title": "Polerón - Unisex - MIKE ROSADO",
+  "color": "pink"
+ },
+ {
+  "handle": "poleron-mike-verde",
+  "title": "Polerón - Unisex - MIKE VERDE",
+  "color": "green"
+ },
+ {
+  "handle": "black-baggy-jeans",
+  "title": "Pantalón - Black Baggy Jeans",
+  "color": "black"
+ },
+ {
+  "handle": "snake-baggy-jeans",
+  "title": "Pantalón - Snake Baggy Jeans",
+  "color": "black"
+ },
+ {
+  "handle": "polera-you-are-lucky",
+  "title": "Polera Boxy Fit You Are Lucky",
+  "color": "white"
+ },
+ {
+  "handle": "straight-jeans",
+  "title": "Pantalón - Straight Jeans",
+  "color": "blue"
+ },
+ {
+  "handle": "denim-jacket",
+  "title": "Chaqueta de Denim Azul con Serigrafía",
+  "color": "blue"
+ },
+ {
+  "handle": "conjunto-dos-piezas-susurro-de-olas",
+  "title": "Conjunto - DOS PIEZAS SUSURRO de OLAS",
+  "color": "multicolor"
+ },
+ {
+  "handle": "vestido-olas-nomadas",
+  "title": "Vestido Largo Halter Olas Nómadas",
+  "color": "multicolor"
+ },
+ {
+  "handle": "conjunto-dos-piezas-susurro-de-atardecer",
+  "title": "Conjunto - DOS PIEZAS SUSURRO de ATARDECER",
+  "color": "multicolor"
+ },
+ {
+  "handle": "vestido-brisa-de-verano",
+  "title": "Vestido - BRISA de VERANO",
+  "color": "white"
+ },
+ {
+  "handle": "cortaviento-susurro-del-bosque",
+  "title": "Cortaviento - SUSURRO del BOSQUE",
+  "color": "multicolor"
+ },
+ {
+  "handle": "camisa-boho-arena-mao",
+  "title": "Camisa Boho de Algodón Arena Cuello Mao",
+  "color": "beige"
+ },
+ {
+  "handle": "camisa-celeste-mao-costera",
+  "title": "Camisa - CELESTE MAO COSTERA",
+  "color": "light blue"
+ },
+ {
+  "handle": "fucsia-bold",
+  "title": "Conjunto de Polerón y Pantalón Fucsia Bold",
+  "color": "pink"
+ },
+ {
+  "handle": "pantalon-flow-maestro",
+  "title": "Pantalón Ancho de Tela Texturizada Flow Maestro",
+  "color": "beige"
+ },
+ {
+  "handle": "vestido-eolo",
+  "title": "Vestido Largo Wrap Vintage Eolo",
+  "color": "white"
+ },
+ {
+  "handle": "casaca-impermeable-wintertrainer-edicion-limitada",
+  "title": "Casaca - Impermeable Térmica Wintertrainer - Edición Limitada",
+  "color": "multicolor"
+ },
+ {
+  "handle": "conjunto-copacabana",
+  "title": "Conjunto Guinda de Lentejuelas Copacabana",
+  "color": "pink"
+ },
+ {
+  "handle": "conjunto-ipanema",
+  "title": "Conjunto Top Halter y Falda Pareo Ipanema",
+  "color": "multicolor"
+ },
+ {
+  "handle": "vestido-brisa-carioca",
+  "title": "Vestido Largo Halter Translúcido Brisa Carioca",
+  "color": "pink"
+ },
+ {
+  "handle": "vestido-samba-rose",
+  "title": "Vestido Mini Strapless de Lentejuelas Samba Rosé",
+  "color": "pink"
+ },
+ {
+  "handle": "chaqueta-la-black-fur",
+  "title": "Chaqueta Impermeable con Forro Thermaheat Black Fur",
+  "color": "black"
+ },
+ {
+  "handle": "abrigo-tedd-a-cuadros",
+  "title": "Abrigo de Bouclé Estampado a Cuadros",
+  "color": "beige"
+ },
+ {
+  "handle": "abrigo-zebra-teddy-coat",
+  "title": "Abrigo - Zebra Teddy Coat",
+  "color": "black"
+ },
+ {
+  "handle": "poleron-duffle-cropped",
+  "title": "Polerón Cropped de Franela Beige Duffle",
+  "color": "beige"
+ },
+ {
+  "handle": "abrigo-camel-leather",
+  "title": "Abrigo de Ecocuero Camel Leather",
+  "color": "black"
+ },
+ {
+  "handle": "falda-camel-leather",
+  "title": "Falda de Ecocuero Camel Leather",
+  "color": "beige"
+ },
+ {
+  "handle": "parka-blizzard",
+  "title": "Parka - Impermeable Blizzard Térmica",
+  "color": "beige"
+ },
+ {
+  "handle": "parka-turquesa-urban-trek",
+  "title": "Parka - Mujer - Turquesa Impermeable Urban Trek",
+  "color": "teal"
+ },
+ {
+  "handle": "casaca-velvet-fur",
+  "title": "Casaca - Mujer - Velvet Fur",
+  "color": "burgundy"
+ },
+ {
+  "handle": "poleron-ambarino",
+  "title": "Polerón - Mujer - Ambarino",
+  "color": "brown"
+ },
+ {
+  "handle": "conjunto-comfy-urbano",
+  "title": "Conjunto - Unisex - COMFY URBANO",
+  "color": "beige"
+ }
+]
