@@ -452,10 +452,23 @@ async function findShipmentByOrderId(orderId, { signal } = {}) {
   // Se usa el mapa cacheado: consultar Supabase en cada mensaje es lento
   // desde Vercel (65-90 s de forma intermitente).
   const map = await getTrackingMap();
-  const trackingId = map.get(orderId);
+  let trackingId = map.get(orderId);
+  let origen = "mapa";
+
+  // Fallback: el numero de rastreo tambien queda guardado en el pedido de
+  // Shopify (fulfillments.trackingInfo.number). Sirve para los pedidos que
+  // el bot NO proceso: los anteriores a la integracion y los despachados
+  // por otro sistema. Con ese numero se le pregunta el estado a Envia.
+  let ctx = null;
+  if (!trackingId) {
+    ctx = await contextoDeShopify(orderId, { signal });
+    trackingId = (ctx && ctx.trackingNumber) || null;
+    if (trackingId) origen = "shopify";
+  }
+
   console.log(
     `[envia] (${((Date.now() - t0) / 1000).toFixed(1)}s) ${orderId}: ` +
-      `mapa=${map.size} tracking=${trackingId || "sin envio"}`
+      `mapa=${map.size} origen=${origen} tracking=${trackingId || "sin envio"}`
   );
   if (!trackingId) return null;
 
@@ -464,8 +477,61 @@ async function findShipmentByOrderId(orderId, { signal } = {}) {
     `[envia] (${((Date.now() - t0) / 1000).toFixed(1)}s) ${orderId}: Envia contesto`
   );
   const shipment = normalizeShipment(raw);
-  if (shipment) shipment.orderId = shipment.orderId || orderId;
-  return shipment;
+  if (shipment) {
+    shipment.orderId = shipment.orderId || orderId;
+    shipment.trackingNumber = shipment.trackingNumber || trackingId;
+    if (!shipment.trackUrl && ctx && ctx.trackingUrl) shipment.trackUrl = ctx.trackingUrl;
+    return shipment;
+  }
+
+  // Envia no contesto (envio archivado, de otra cuenta, etc.). Si Shopify
+  // dice que el pedido ya fue despachado, al menos se le puede dar el
+  // numero de rastreo y el link para que lo siga por su cuenta.
+  if (ctx && ctx.trackingNumber && esDespachado(ctx)) {
+    return {
+      status: "Shipped",
+      currentStatus: "Shipped",
+      delivered: false,
+      trackingNumber: ctx.trackingNumber,
+      trackUrl: ctx.trackingUrl || null,
+      trackingCompany: ctx.trackingCompany || null,
+      orderId,
+      customerPhone: null,
+      events: [],
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Contexto del pedido en Shopify (notas + numero de rastreo).
+ *
+ * @param {string} orderId Nombre del pedido.
+ * @param {object} [options] { signal }
+ * @returns {Promise<object|null>}
+ */
+async function contextoDeShopify(orderId, { signal } = {}) {
+  try {
+    // Require perezoso: shopify.js es pesado y no hace falta cargarlo si el
+    // pedido ya esta en el mapa.
+    const shopify = require("./shopify.js");
+    return await shopify.getOrderContext(orderId, { signal });
+  } catch (error) {
+    console.warn("[envia] no se pudo leer el pedido en Shopify:", error.message);
+    return null;
+  }
+}
+
+/**
+ * Shopify dice que el pedido ya fue despachado.
+ *
+ * @param {object} ctx Contexto del pedido.
+ * @returns {boolean}
+ */
+function esDespachado(ctx) {
+  const s = String(ctx.fulfillmentStatus || "").toUpperCase();
+  return s === "FULFILLED" || s === "PARTIALLY_FULFILLED";
 }
 
 /**

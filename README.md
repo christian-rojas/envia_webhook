@@ -21,9 +21,10 @@ Instagram   ✅ funcionando. El bot hace SOLO dos cosas: pedir el número de
                           calla si hay un asesor humano hablando.
 WhatsApp    ⏸ en pausa (FEATURE_WHATSAPP=0). App publicada y número
                           registrado; falta método de pago y token.
-Pedidos     ⏸ en pausa (FEATURE_ORDERS=0). El webhook de Shopify responde
-                           200 sin hacer nada: no se crea el envío en Envia ni
-                           se guarda el seguimiento. El bot sigue funcionando.
+Pedidos     ✅ activo (FEATURE_ORDERS=1). El webhook de Shopify crea el envío
+                           en Envia y guarda el seguimiento. Con FEATURE_ORDERS=0
+                           se pausa: el webhook responde 200 sin hacer nada y el
+                           bot sigue funcionando.
 ```
 
 > Ver [docs/flujo-bot.md](docs/flujo-bot.md). Con `FEATURE_BOT_AUTOMATICO=0`
@@ -106,6 +107,26 @@ POST /{ig-user-id}/subscribed_apps?subscribed_fields=messages,...
 Meta responde al guardar la suscripción con un `GET` de verificación. Si en los
 logs de Vercel no aparece un `GET /webhook/instagram` → `[instagram] webhook
 verificado` al guardar, la suscripción no quedó activa.
+
+## De dónde sale el estado del envío
+
+El bot **no depende de Supabase** para saber en qué estado va un pedido. Hay
+tres fuentes, en este orden:
+
+| # | Fuente | Qué aporta |
+|---|---|---|
+| 1 | `order_tracking` en Supabase | El mapa pedido → número de rastreo, para los envíos que creó el bot |
+| 2 | **El pedido en Shopify** (`fulfillments.trackingInfo`) | El número de rastreo y el link de la transportista, para los pedidos que el bot **no** procesó (anteriores a la integración o despachados por otro sistema) |
+| 3 | **Envia** (`/ship/generaltrack`) | El estado real y los eventos del envío |
+
+O sea: pedido → número de rastreo → Envia. Y el número de rastreo sale de
+Supabase **o** del propio pedido en Shopify.
+
+Verificado con MON1095 (abril 2022, nunca procesado por el bot): el bot
+responde "entregado" con el número de seguimiento y el link de Chilexpress.
+
+> OJO: `generaltrack` de Envia **exige** el número de rastreo; no acepta la
+> referencia del pedido ("MON4781"). Por eso hace falta el paso anterior.
 
 ## Cómo identifica el bot el pedido
 

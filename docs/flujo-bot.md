@@ -1,3 +1,27 @@
+
+## De donde sale el numero de rastreo (2026-11-21)
+
+Antes el bot saco el numero de rastreo SOLO del mapa `order_tracking` de
+Supabase, que se llenaba cuando el bot mismo creaba el envio. Por eso, de
+los pedidos que el bot no proceso (los anteriores a la integracion y los
+despachados por otro sistema) no sabia el estado: decia "en fabricacion" o
+"no encontramos el pedido".
+
+Ahora hay una segunda fuente: **el numero de rastreo queda guardado en el
+pedido de Shopify** (`fulfillments.trackingInfo.number`, con el link de
+Chilexpress). El bot lo pide ahi cuando el mapa no lo tiene, y despues le
+pregunta el estado a Envia (`/ship/generaltrack`).
+
+```
+pedido (MON1095)
+  -> numero de rastreo: order_tracking (Supabase)  ó  fulfillments del pedido (Shopify)
+  -> estado: Envia /ship/generaltrack
+```
+
+Ojo: `generaltrack` EXIGE el numero de rastreo; no acepta la referencia del
+pedido ("MON4781"), asi que el paso por Shopify es obligatorio para esos
+pedidos.
+
 # El flujo del bot de Instagram (y por qué dejó de bombardear)
 
 ## El problema

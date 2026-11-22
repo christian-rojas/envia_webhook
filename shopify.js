@@ -257,7 +257,7 @@ async function getOrder(orderName, { fresh = false, signal } = {}) {
           createdAt
           note
           displayFulfillmentStatus
-          fulfillments(first: 10) { id status createdAt }
+          fulfillments(first: 10) { id status createdAt trackingInfo { number url company } }
           metafields(first: 30) { edges { node { namespace key type value } } }
           events(first: 50) {
             edges {
@@ -302,9 +302,9 @@ async function getOrder(orderName, { fresh = false, signal } = {}) {
     created_at: node.createdAt,
     note: node.note,
     fulfillmentStatus: node.displayFulfillmentStatus || null,
-    fulfillments: (node.fulfillments?.edges || [])
-      .map((e) => e.node)
-      .filter(Boolean),
+    // OJO: fulfillments es una lista, no una conexion con edges. Antes se
+    // leia como conexion (.edges) y la lista salia SIEMPRE vacia.
+    fulfillments: (node.fulfillments || []).filter(Boolean),
     metafields,
     events,
     line_items: (rest?.line_items || []).length
@@ -449,12 +449,66 @@ async function getOrderContext(orderName, { signal } = {}) {
     fulfillmentStatus: order.fulfillmentStatus || null,
     prepared: isPreparedOrder(order),
     createdAt: order.created_at,
+    // Numero de rastreo que quedo guardado en el pedido de Shopify. Sirve
+    // para los pedidos que el bot no proceso (anteriores a la integracion
+    // o despachados por otro sistema): con ese numero se le pregunta el
+    // estado a Envia.
+    trackingNumber: trackingDeShopify(order),
+    trackingUrl: urlDeRastreo(order),
+    trackingCompany: transportistaDeShopify(order),
     lineItems: (order.line_items || []).map((i) => ({
       title: i.title,
       quantity: i.quantity,
       variant: i.variant_title || null,
     })),
   };
+}
+
+/**
+ * Numero de rastreo de un pedido, tomado de sus fulfillments.
+ *
+ * OJO: `trackingInfo` es una LISTA (a veces vacia), no un objeto.
+ *
+ * @param {object} order Pedido (formato de getOrder).
+ * @returns {string|null}
+ */
+function trackingDeShopify(order) {
+  for (const f of (order && order.fulfillments) || []) {
+    const ti = Array.isArray(f.trackingInfo) ? f.trackingInfo[0] : f.trackingInfo;
+    const n = (ti && ti.number) || f.trackingNumber || null;
+    if (n) return String(n).trim();
+  }
+  return null;
+}
+
+/**
+ * Link de seguimiento (el de Chilexpress o el que traiga la transportista).
+ *
+ * @param {object} order Pedido (formato de getOrder).
+ * @returns {string|null}
+ */
+function urlDeRastreo(order) {
+  for (const f of (order && order.fulfillments) || []) {
+    const ti = Array.isArray(f.trackingInfo) ? f.trackingInfo[0] : f.trackingInfo;
+    const u = (ti && ti.url) || null;
+    if (u) return u;
+  }
+  return null;
+}
+
+/**
+ * Transportista del envio (Chilexpress, etc.).
+ *
+ * @param {object} order Pedido (formato de getOrder).
+ * @returns {string|null}
+ */
+function transportistaDeShopify(order) {
+  for (const f of (order && order.fulfillments) || []) {
+    const ti = Array.isArray(f.trackingInfo) ? f.trackingInfo[0] : f.trackingInfo;
+    const c = (ti && ti.company) || f.trackingCompany || null;
+    if (c) return c;
+  }
+  return null;
 }
 
 /**
