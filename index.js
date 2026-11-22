@@ -555,6 +555,18 @@ app.post("/webhook/shopify", async (req, res) => {
     return res.status(401).send("Invalid HMAC");
   }
 
+  // Procesamiento de pedidos apagado (FEATURE_ORDERS=0): el webhook se
+  // responde igual (200) para que Shopify no lo reintente, pero no se crea
+  // el envio en Envia ni se guarda el seguimiento. El bot sigue funcionando.
+  if (!features.isEnabled("orders")) {
+    console.log(
+      "[shopify] pedido " +
+        ((req.body && (req.body.name || req.body.order_number)) || "?") +
+        " recibido, pero el procesamiento de pedidos esta apagado (FEATURE_ORDERS=0)"
+    );
+    return res.status(200).send("Procesamiento de pedidos pausado");
+  }
+
   const order = req.body;
   console.log(JSON.stringify(order, null, 2));
 

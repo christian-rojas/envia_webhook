@@ -9,6 +9,8 @@
  *   FEATURE_MANUFACTURING=0        no cuenta el proceso de fabricacion
  *   FEATURE_PRODUCT_INFO=0         no busca productos del catalogo
  *   FEATURE_CONVERSATION_HISTORY=0 no lee el historial de la conversacion
+ *   FEATURE_ORDERS=0                no procesa los pedidos de Shopify
+ *                                    (no crea el envio en Envia)
  *
  * Los valores admitidos son 1/0, true/false, on/off, si/no, yes/no.
  * Si no se define la variable, aplica el valor por defecto.
@@ -45,6 +47,14 @@ const DEFINICIONES = {
   },
   // Politica de cambios y devoluciones + guia de tallas.
   storePolicies: { porDefecto: true, desc: "Politicas y guias de la tienda" },
+  // Procesamiento de pedidos de Shopify (webhook orders/create): crea el
+  // envio en Envia y guarda el seguimiento. Apagado, el webhook responde 200
+  // sin hacer nada: el bot (Instagram/WhatsApp) sigue funcionando y los
+  // pedidos que ya tienen envio se siguen consultando.
+  orders: {
+    porDefecto: false,
+    desc: "Procesar pedidos de Shopify (crear envio y seguimiento)",
+  },
   // Flujo determinista: el bot solo pide el numero de pedido o dice donde
   // esta el pedido, una vez cada uno, y se calla si hay un asesor humano
   // hablando con el cliente. Apagado vuelve el bot con IA (mas flexible,

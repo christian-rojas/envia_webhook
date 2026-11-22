@@ -21,6 +21,9 @@ Instagram   ✅ funcionando. El bot hace SOLO dos cosas: pedir el número de
                           calla si hay un asesor humano hablando.
 WhatsApp    ⏸ en pausa (FEATURE_WHATSAPP=0). App publicada y número
                           registrado; falta método de pago y token.
+Pedidos     ⏸ en pausa (FEATURE_ORDERS=0). El webhook de Shopify responde
+                           200 sin hacer nada: no se crea el envío en Envia ni
+                           se guarda el seguimiento. El bot sigue funcionando.
 ```
 
 > Ver [docs/flujo-bot.md](docs/flujo-bot.md). Con `FEATURE_BOT_AUTOMATICO=0`
@@ -33,6 +36,8 @@ FEATURE_WHATSAPP=0   FEATURE_INSTAGRAM=1   FEATURE_MANUFACTURING=1
 FEATURE_PRODUCT_INFO=1   FEATURE_CONVERSATION_HISTORY=1   FEATURE_STORE_POLICIES=1
 FEATURE_BOT_AUTOMATICO=1    # flujo determinista (sin IA) en los DMs
 FEATURE_REPETIR_ESTADO=0   # 1 = repetir el estado si el cliente insiste
+FEATURE_ORDERS=0            # 1 = procesar los pedidos de Shopify (crear el
+                            #     envío en Envia y guardar el seguimiento)
 ```
 
 ## Rutas
