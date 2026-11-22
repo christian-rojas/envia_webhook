@@ -1,5 +1,5 @@
 /**
- * Bloque 4 del plan SEO: los 4 articulos de blog, programados para abril 2027
+ * Bloque 4 del plan SEO: los 4 articulos de blog, programados para enero 2027
  * (fecha pedida por el merchant el 22-12-2026), para que queden indexados
  * antes de que suba la demanda de autumno-invierno.
  *
@@ -26,12 +26,15 @@ const HOY = process.argv.includes("--hoy");
 const BLOG = "gid://shopify/Blog/83483230431";
 const MES = "2027-04";
 
-// Fechas de publicacion: una por semana en abril 2027.
+// Fechas de publicacion: una por semana en enero 2027 (martes), adelantadas
+// desde abril 2027 por pedido del merchant el 22-12-2026: la query "diferencia
+// entre parka y casaca" ya posiciona en 18 y es la que mas rapido puede
+// mover.
 const FECHAS = {
-  "diferencia-entre-parka-y-casaca": "2027-04-06T12:00:00Z",
-  "como-elegir-cortaviento-impermeable": "2027-04-13T12:00:00Z",
-  "parka-o-cortaviento-impermeable": "2027-04-20T12:00:00Z",
-  "como-lavar-una-parka-impermeable": "2027-04-27T12:00:00Z",
+  "diferencia-entre-parka-y-casaca": "2027-01-05T12:00:00Z",
+  "como-elegir-cortaviento-impermeable": "2027-01-12T12:00:00Z",
+  "parka-o-cortaviento-impermeable": "2027-01-19T12:00:00Z",
+  "como-lavar-una-parka-impermeable": "2027-01-26T12:00:00Z",
 };
 
 const ARTICULOS = [
