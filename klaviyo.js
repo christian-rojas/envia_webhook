@@ -126,22 +126,60 @@ function pedidosDe(p) {
   return Number(props["Orders.Count"] || 0);
 }
 
+// La API acepta maximo 100 correos por request ("Email address per request
+// limit: 100"). Mandar mas de 100 da 400, asi que va en lotes.
+const LOTE_SUPRESION = 100;
+
 /**
  * Suprime perfiles (dejan de ser activos y no reciben email marketing).
  *
  * @param {string[]} emails Correos a suprimir.
- * @returns {Promise<{status:number, j:any}>}
+ * @returns {Promise<{status:number, j:any, lotes:number, jobs:any[]}>}
  */
 async function suprimir(emails) {
-  if (!emails.length) return { status: 200, j: { data: [] } };
-  const data = emails.map((email) => ({
-    type: "profile",
-    attributes: { email },
-  }));
+  if (!emails.length) return { status: 200, j: { data: [] }, lotes: 0, jobs: [] };
+  const jobs = [];
+  let ultimo = { status: 200, j: null };
+  const lotes = Math.ceil(emails.length / LOTE_SUPRESION);
+  for (let i = 0; i < emails.length; i += LOTE_SUPRESION) {
+    const lote = emails.slice(i, i + LOTE_SUPRESION);
+    const res = await api("POST", "/profile-suppression-bulk-create-jobs/", {
+      data: {
+        type: "profile-suppression-bulk-create-job",
+        attributes: {
+          profiles: {
+            data: lote.map((email) => ({ type: "profile", attributes: { email } })),
+          },
+        },
+      },
+    });
+    ultimo = res;
+    jobs.push(res);
+    if (res.status >= 400) break;
+    // el rate limit es 75/s: con una pausa corta se alcanza bien
+    await new Promise((res2) => setTimeout(res2, 60));
+  }
+  return { status: ultimo.status, j: ultimo.j, lotes, jobs };
+}
+
+/**
+ * Suprime TODOS los miembros de un segmento o de una lista con un solo job.
+ * Es la via oficial masiva: el segmento se define en el panel de Klaviyo (con
+ * las condiciones que quiera el merchant) y aca se dispara.
+ *
+ * @param {string} id Id del segmento o de la lista.
+ * @param {"segment"|"list"} [tipo]
+ * @returns {Promise<{status:number, j:any}>}
+ */
+async function suprimirSegmento(id, tipo = "segment") {
+  const type = tipo === "list" ? "list" : "segment";
   return api("POST", "/profile-suppression-bulk-create-jobs/", {
     data: {
       type: "profile-suppression-bulk-create-job",
-      attributes: { profiles: { data } },
+      attributes: {},
+      relationships: {
+        [type]: { data: { type, id } },
+      },
     },
   });
 }
@@ -291,6 +329,7 @@ module.exports = {
   listarPerfiles,
   purgar,
   suprimir,
+  suprimirSegmento,
   borrar,
   vieneDeShopify,
   pedidosDe,

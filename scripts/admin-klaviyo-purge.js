@@ -25,6 +25,9 @@
  *   --limite N        cambia el tope (default 250)
  *   --orden updated   ordena por la ultima vez que cambio el perfil
  *   --proteger-con-pedidos  nunca suprime un perfil que tenga pedidos
+ *   --segmento ID     suprime TODOS los miembros de un segmento con un solo
+ *                     job (la via oficial masiva: el segmento se define en el
+ *                     panel de Klaviyo y aca se dispara)
  */
 require("dotenv").config();
 
@@ -39,6 +42,13 @@ const flag = (nombre) => process.argv.includes(nombre);
 (async () => {
   if (!klaviyo.activo()) {
     console.log("  ERROR: falta KLAVIYO_PRIVATE_KEY en el .env");
+    return;
+  }
+  const segmento = arg("--segmento");
+  if (segmento) {
+    console.log("  suprimiendo todos los miembros del segmento " + segmento + "...");
+    const r = await klaviyo.suprimirSegmento(segmento, arg("--tipo-segmento") || "segment");
+    console.log("  job -> " + r.status + " " + JSON.stringify(r.j).slice(0, 240));
     return;
   }
   const opciones = {
