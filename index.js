@@ -17,6 +17,7 @@ const conversations = require("./conversations.js");
 const features = require("./features.js");
 const bandeja = require("./bandeja.js");
 const flow = require("./flow.js");
+const klaviyo = require("./klaviyo.js");
 
 // Palabras que delatan que una nota habla del proceso de fabricacion
 // (corte, planchado, ensamblaje...).
@@ -570,6 +571,20 @@ app.post("/webhook/shopify", async (req, res) => {
   const order = req.body;
   console.log(JSON.stringify(order, null, 2));
 
+  // Cada pedido puede traer un perfil nuevo a Klaviyo. Se purga en segundo
+  // plano para no pasarse del limite de 250 perfiles activos del plan gratis
+  // (la regla es FIFO: se conservan los 250 mas recientes). No bloquea la
+  // respuesta del webhook ni el envio en Envia.
+  if (klaviyo.activo()) {
+    const waitUntil =
+      req.waitUntil || vercelWaitUntil || ((p) => p && p.catch(() => {}));
+    waitUntil(
+      klaviyo.purgar({ aplicar: true }).catch((error) => {
+        console.error("[klaviyo] error purgando perfiles:", error.message);
+      })
+    );
+  }
+
   // Este webhook lo reintenta Shopify si no recibe respuesta rapido, y cada
   // reintento vuelve a pedir el envio a Envia (envios duplicados). Ademas un
   // error de SMTP (Zoho) llegaba a cancelar la respuesta y la request se
@@ -843,6 +858,43 @@ app.get("/bandeja", async (req, res) => {
     res.status(200).json({ ok: true, procesados, revisados: pendientes.length });
   } catch (error) {
     console.error("[bandeja] error:", error.message);
+    res.status(200).json({ ok: false, error: error.message });
+  }
+});
+
+/**
+ * GET /klaviyo-purge
+ * Cron diario: acota los perfiles de Klaviyo al limite del plan gratis (250
+ * activos). La regla es FIFO: se conservan los 250 perfiles mas recientes y
+ * se suprime el resto (los suprimidos no cuentan para el limite).
+ *
+ * Con KLAVIYO_PURGAR=0 la ruta no hace nada, por si el merchant quiere
+ * apagarla sin redesplegar.
+ */
+app.get("/klaviyo-purge", async (req, res) => {
+  if (!features.isEnabled("klaviyo")) {
+    return res.status(200).json({ ok: true, motivo: "klaviyo apagado" });
+  }
+  if (!klaviyo.activo()) {
+    return res.status(200).json({ ok: false, motivo: "falta KLAVIYO_PRIVATE_KEY" });
+  }
+  try {
+    const informe = await klaviyo.purgar({ aplicar: true });
+    console.log(
+      "[klaviyo-purge] perfiles: " + informe.total + " | a suprimir: " + informe.aSuprimir.length
+    );
+    res.status(200).json({
+      ok: !informe.error,
+      total: informe.total,
+      limite: informe.limite,
+      suprimidos: informe.aSuprimir.length,
+      spam: informe.spam,
+      clientes: informe.clientes,
+      quedan: informe.quedan,
+      error: informe.error,
+    });
+  } catch (error) {
+    console.error("[klaviyo-purge] error:", error.message);
     res.status(200).json({ ok: false, error: error.message });
   }
 });

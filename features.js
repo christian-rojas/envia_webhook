@@ -11,6 +11,7 @@
  *   FEATURE_CONVERSATION_HISTORY=0 no lee el historial de la conversacion
  *   FEATURE_ORDERS=0                no procesa los pedidos de Shopify
  *                                    (no crea el envio en Envia)
+ *   FEATURE_KLAVIYO=0               no purga los perfiles de Klaviyo
  *
  * Los valores admitidos son 1/0, true/false, on/off, si/no, yes/no.
  * Si no se define la variable, aplica el valor por defecto.
@@ -54,6 +55,12 @@ const DEFINICIONES = {
   orders: {
     porDefecto: false,
     desc: "Procesar pedidos de Shopify (crear envio y seguimiento)",
+  },
+  // Purga de perfiles de Klaviyo (mantener el plan gratis bajo 250 activos).
+  // Apagado, no se toca la lista de perfiles de Klaviyo.
+  klaviyo: {
+    porDefecto: true,
+    desc: "Purgar los perfiles de Klaviyo al limite del plan gratis",
   },
   // Flujo determinista: el bot solo pide el numero de pedido o dice donde
   // esta el pedido, una vez cada uno, y se calla si hay un asesor humano

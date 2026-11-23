@@ -15,6 +15,10 @@
     {
       "path": "/bandeja",
       "schedule": "0 10 * * *"
+    },
+    {
+      "path": "/klaviyo-purge",
+      "schedule": "0 14 * * *"
     }
   ]
 }
