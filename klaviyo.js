@@ -86,24 +86,35 @@ async function api(method, path, body) {
  * @param {{sort?:string}} [opciones]
  * @returns {Promise<object[]>} Perfiles (objetos JSON:API).
  */
-async function listarPerfiles({ sort = "-created" } = {}) {
+async function listarPerfiles({ sort = "-created", pageSize = 100, maxPaginas = 0 } = {}) {
   const todos = [];
-  let cursor = null;
-  for (let pagina = 0; pagina < 60; pagina++) {
-    const ruta =
-      "/profiles/?sort=" + encodeURIComponent(sort) + (cursor ? "&page[cursor]=" + cursor : "");
-    const { status, j } = await api("GET", ruta);
-    if (status !== 200) {
-      console.error("[klaviyo] listando perfiles: " + status + " " + JSON.stringify(j).slice(0, 200));
+  // Se sigue el link "next" tal cual lo devuelve Klaviyo: el cursor viene
+  // URL-codificado (page%5Bcursor%5D=) y reconstruirlo a mano lo rompe
+  // ("Invalid page cursor") y hace que la lista se corte en la primera pagina.
+  let url =
+    "https://a.klaviyo.com/api/profiles/?sort=" +
+    encodeURIComponent(sort) +
+    "&page[size]=" +
+    pageSize;
+  const tope = maxPaginas > 0 ? maxPaginas : 2000;
+  for (let pagina = 0; pagina < tope && url; pagina++) {
+    const r = await fetch(url, { headers: headers() });
+    const texto = await r.text();
+    let j = null;
+    try {
+      j = JSON.parse(texto);
+    } catch (e) {
+      j = texto;
+    }
+    if (r.status !== 200) {
+      console.error("[klaviyo] listando perfiles: " + r.status + " " + JSON.stringify(j).slice(0, 200));
       break;
     }
     todos.push(...(j.data || []));
-    cursor = j.links && j.links.next ? j.links.next.split("page[cursor]=")[1] : null;
-    if (!cursor) break;
+    url = j.links && j.links.next ? j.links.next : null;
   }
   return todos;
 }
-
 /**
  * Un perfil que viene de Shopify lleva external_id (el id del cliente en
  * Shopify). Los que se dieron de alta solos en la lista de/newsletter no.
@@ -137,6 +148,10 @@ const LOTE_SUPRESION = 100;
  * @returns {Promise<{status:number, j:any, lotes:number, jobs:any[]}>}
  */
 async function suprimir(emails) {
+  // hay perfiles sin email (los crea el spam sin correo): la API no los
+  // acepta en un job por email, y ademas sin email no son "activos" ni
+  // cuentan para el limite.
+  emails = (emails || []).filter(Boolean);
   if (!emails.length) return { status: 200, j: { data: [] }, lotes: 0, jobs: [] };
   const jobs = [];
   let ultimo = { status: 200, j: null };
@@ -212,10 +227,35 @@ async function borrar(ids) {
 }
 
 /**
+ * Un perfil es BASURA si no hay ningun rastro de que sea de la tienda:
+ * no acepto marketing, no tiene pedidos y no viene de Shopify. Es el perfil
+ * que deja el trafico de bots (y el spam del formulario).
+ *
+ * Un perfil es CLIENTE/SUSCRIPTOR en cualquier otro caso. A esos no se los
+ * toca: son los que hay que mantener para poder escribirles.
+ *
+ * @param {object} p Perfil.
+ * @returns {boolean}
+ */
+function esBasura(p) {
+  if (vieneDeShopify(p)) return false;
+  if (pedidosDe(p) > 0) return false;
+  const props = (p.attributes && p.attributes.properties) || {};
+  if (props["Accepts Marketing"] === true) return false;
+  return true;
+}
+
+/**
  * Acota la lista de perfiles al limite del plan.
  *
- * Regla: se conservan los `limite` perfiles mas recientes (orden descendente)
- * y se saca el resto, del mas antiguo al mas nuevo.
+ * Regla (por defecto): se suprime la BASURA (bots y spam sin relacion con la
+ * tienda). Se conservan intactos los clientes y los suscriptores, aunque
+ * sigan siendo mas de 250.
+ *
+ * Modo "fifo": se conservan los `limite` perfiles mas recientes (orden
+ * descendente) y se suprime el resto, del mas antiguo al mas nuevo. OJO:
+ * con la base de suscriptores real de la tienda (mas de 10.000), este modo
+ * suprime suscriptores de verdad, no basura. Hay que activarlo a proposito.
  *
  * @param {object} [opciones]
  * @param {number} [opciones.limite] Maximo de perfiles activos (250).
@@ -238,7 +278,21 @@ async function purgar(opciones = {}) {
   const aplicar = Boolean(opciones.aplicar);
   const modo = opciones.modo || process.env.KLAVIYO_PURGE_MODO || "suprimir";
 
-  const perfiles = await listarPerfiles({ sort: "-" + orden });
+  // El segmento de basura (creado en el panel o por la API) se suprime con
+  // un solo job: es la via rapida y la que alcanza lo que la enumeracion no
+  // alcanza cuando el Segmento ya lo tiene.
+  const segmentoBasura = opciones.segmentoBasura || process.env.KLAVIYO_SEGMENTO_BASURA || "";
+  let suprimidosPorSegmento = 0;
+  if (segmentoBasura && aplicar) {
+    const rs = await suprimirSegmento(segmentoBasura, "segment");
+    console.log("[klaviyo] job de supresion del segmento " + segmentoBasura + ": " + rs.status);
+    if (rs.status >= 400) console.log("[klaviyo]   " + JSON.stringify(rs.j).slice(0, 200));
+  }
+
+  // La enumeracion se acota: la funcion de Vercel tiene 60 s de techo y
+  // con 60.000 perfiles el listado completo se pasa de largo.
+  const maxPaginas = Number(opciones.maxPaginas || process.env.KLAVIYO_MAX_PAGINAS || 60);
+  const perfiles = await listarPerfiles({ sort: "-" + orden, maxPaginas });
   const total = perfiles.length;
 
   const informe = {
@@ -254,33 +308,50 @@ async function purgar(opciones = {}) {
     error: null,
   };
 
-  if (total <= limite) {
+  if (total <= limite && !segmentoBasura) {
     console.log("[klaviyo] " + total + " perfiles, limite " + limite + ": no hay nada que hacer.");
     return informe;
   }
 
 
-  // La lista viene de mas nuevo a mas viejo: el sobrante es la cola.
-  //
-  // INVARIANTE: despues de purgar, todos los que quedan fuera de los 250 mas
-  // recientes estan suprimidos. Como un perfil suprimido NO cuenta para el
-  // limite de 250, da igual que el script no sepa cuales estaban ya
-  // suprimidos: los activos siempre quedan dentro de los 250.
-  const sobrante = perfiles.slice(limite);
-  let candidatos = sobrante;
-  if (protegerConPedidos) {
-    candidatos = sobrante.filter((p) => pedidosDe(p) === 0);
-    const conPedidos = sobrante.length - candidatos.length;
-    if (conPedidos) {
-      console.log(
-        "[klaviyo] " + conPedidos + " perfiles con pedidos NO se tocan (protegerConPedidos=1)."
-      );
-      informe.quedan = limite + conPedidos;
-    }
+  const fifo = opciones.fifo === true || process.env.KLAVIYO_PURGE_FIFO === "1";
+  if (total <= limite && !fifo) {
+    // no hay sobrantes por limite, pero puede haber basura que limpiar
   }
+  let candidatos;
+  if (fifo) {
+    // Modo estricto: se conservan los `limite` mas recientes y se suprime el
+    // resto, empezando por el mas antiguo.
+    const sobrante = perfiles.slice(limite);
+    candidatos = sobrante;
+    if (protegerConPedidos) {
+      candidatos = sobrante.filter((p) => pedidosDe(p) === 0);
+      const conPedidos = sobrante.length - candidatos.length;
+      if (conPedidos) {
+        console.log("[klaviyo] " + conPedidos + " perfiles con pedidos NO se tocan.");
+        informe.quedan = limite + conPedidos;
+      }
+    }
+  } else {
+    // Modo por defecto: solo se va la basura (bots y spam). Los clientes y
+    // los suscriptores se quedan, aunque el total pase de 250.
+    candidatos = perfiles.filter(esBasura);
+    const basura = candidatos.length;
+    const quedanActivos = perfiles.length - basura;
+    console.log(
+      "[klaviyo] " + perfiles.length + " perfiles: " + basura + " son basura (sin consentimiento, sin pedidos, sin Shopify). Se conservan " + quedanActivos + "."
+    );
+    if (quedanActivos > limite) {
+      console.log(
+        "[klaviyo] AVISO: quedan " + quedanActivos + " perfiles activos y el plan gratis permite " + limite + ". Los sobrantes son clientes y suscriptores: para eso hay que cambiar de plan (KLAVIYO_PURGE_FIFO=1 los suprime, pero se lleva suscriptores reales)."
+      );
+    }
+    informe.quedan = quedanActivos;
+  }
+  informe.fifo = fifo;
 
-  const spam = candidatos.filter((p) => !vieneDeShopify(p));
-  const clientes = candidatos.filter((p) => vieneDeShopify(p));
+  const spam = candidatos.filter((p) => !vieneDeShopify(p) && pedidosDe(p) === 0);
+  const clientes = candidatos.filter((p) => vieneDeShopify(p) || pedidosDe(p) > 0);
   informe.aSuprimir = candidatos.map((p) => ({
     id: p.id,
     email: p.attributes.email,
@@ -291,7 +362,9 @@ async function purgar(opciones = {}) {
   informe.spam = spam.length;
   informe.clientes = clientes.length;
 
-  console.log("[klaviyo] " + total + " perfiles > limite " + limite + ": sobran " + sobrante.length + ".");
+  console.log(
+    "[klaviyo] " + total + " perfiles vistos | a suprimir: " + candidatos.length + " (modo " + (fifo ? "fifo" : "solo basura") + ")"
+  );
   console.log("[klaviyo]   de alta propia (newsletter): " + spam.length + " | de Shopify: " + clientes.length);
   informe.aSuprimir.slice(0, 15).forEach((p) => {
     console.log(
@@ -333,5 +406,6 @@ module.exports = {
   borrar,
   vieneDeShopify,
   pedidosDe,
+  esBasura,
   LIMITE_POR_DEFECTO,
 };

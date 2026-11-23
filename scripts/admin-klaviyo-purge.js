@@ -25,9 +25,14 @@
  *   --limite N        cambia el tope (default 250)
  *   --orden updated   ordena por la ultima vez que cambio el perfil
  *   --proteger-con-pedidos  nunca suprime un perfil que tenga pedidos
+ *   --fifo      modo estricto: conserva los 250 mas recientes y suprime todo
+ *               lo demas, aunque sean suscriptores reales (peligroso)
  *   --segmento ID     suprime TODOS los miembros de un segmento con un solo
  *                     job (la via oficial masiva: el segmento se define en el
  *                     panel de Klaviyo y aca se dispara)
+ *   --segmento-basura ID  id del segmento con la basura (bots): se suprime
+ *                     entero con un job, sin enumerar 60.000 perfiles
+ *   --max-paginas N   cuantas paginas listar (default 60 = 6.000 perfiles)
  */
 require("dotenv").config();
 
@@ -55,6 +60,9 @@ const flag = (nombre) => process.argv.includes(nombre);
     limite: arg("--limite") ? Number(arg("--limite")) : undefined,
     orden: arg("--orden") || undefined,
     protegerConPedidos: flag("--proteger-con-pedidos"),
+    fifo: flag("--fifo"),
+    segmentoBasura: arg("--segmento-basura") || undefined,
+    maxPaginas: arg("--max-paginas") ? Number(arg("--max-paginas")) : undefined,
     modo: arg("--modo") || "suprimir",
     aplicar: flag("--aplicar"),
   };
