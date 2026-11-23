@@ -226,6 +226,36 @@ async function borrar(ids) {
   return { status: ultimo.status, j: ultimo.j, jobs };
 }
 
+
+/**
+ * Lista los perfiles de un segmento (son los que pueden recibir email).
+ *
+ * @param {string} id Id del segmento.
+ * @param {number} maxPaginas Tope de paginas.
+ * @returns {Promise<object[]>}
+ */
+async function listarSegmento(id, maxPaginas) {
+  const todos = [];
+  let url = "https://a.klaviyo.com/api/segments/" + id + "/profiles/?page[size]=100";
+  for (let pagina = 0; pagina < (maxPaginas || 100) && url; pagina++) {
+    const r = await fetch(url, { headers: headers() });
+    const texto = await r.text();
+    let j = null;
+    try {
+      j = JSON.parse(texto);
+    } catch (e) {
+      j = texto;
+    }
+    if (r.status !== 200) {
+      console.error("[klaviyo] listando el segmento: " + r.status + " " + JSON.stringify(j).slice(0, 200));
+      break;
+    }
+    todos.push(...(j.data || []));
+    url = j.links && j.links.next ? j.links.next : null;
+  }
+  return todos;
+}
+
 /**
  * Un perfil es BASURA si no hay ningun rastro de que sea de la tienda:
  * no acepto marketing, no tiene pedidos y no viene de Shopify. Es el perfil
@@ -315,8 +345,48 @@ async function purgar(opciones = {}) {
 
 
   const fifo = opciones.fifo === true || process.env.KLAVIYO_PURGE_FIFO === "1";
-  if (total <= limite && !fifo) {
-    // no hay sobrantes por limite, pero puede haber basura que limpiar
+  const ventana = Number(opciones.ventana || process.env.KLAVIYO_VENTANA_DIAS || 14);
+  const segmentoActivos = opciones.segmentoActivos || process.env.KLAVIYO_SEGMENTO_ACTIVOS || "";
+
+  // REGLA DE LA TIENDA: de la base de clientes y suscriptores solo interesa
+  // la gente que compro en la ventana reciente (2 semanas por defecto). El
+  // resto se suprime: son clientes de 2021-2025 que no vuelven y que, de no
+  // suprimirse, dejan la cuenta en miles de perfiles activos (el plan gratis
+  // permite 250).
+  //
+  // La lista de la ventana sale de SHOPIFY (la fuente de verdad): en Klaviyo
+  // los eventos de pedido todavia no han sincronizado.
+  if (!fifo && segmentoActivos) {
+    const keep = await compradoresRecientes(ventana);
+    console.log("[klaviyo] ventana de " + ventana + " dias: " + keep.size + " compradores (se conservan).");
+    const activos = await listarSegmento(segmentoActivos, maxPaginas);
+    console.log("[klaviyo] perfiles alcanzables: " + activos.length + " (los leidos; puede haber mas).");
+    const aSuprimir = [];
+    const conservados = [];
+    for (const p of activos) {
+      const email = (p.attributes.email || "").toLowerCase().trim();
+      if (email && keep.has(email)) conservados.push(p);
+      else aSuprimir.push(p);
+    }
+    console.log(
+      "[klaviyo] a conservar: " + conservados.length + " | a suprimir: " + aSuprimir.length
+    );
+    if (!aplicar) {
+      console.log("[klaviyo] (dry-run: no se borro nada)");
+      informe.aSuprimir = aSuprimir.map((p) => ({ id: p.id, email: p.attributes.email, created: p.attributes.created, pedidos: pedidosDe(p), origen: vieneDeShopify(p) ? "shopify" : "signup" }));
+      informe.conservados = conservados.length;
+      return informe;
+    }
+    const correos = aSuprimir.map((p) => p.attributes.email).filter(Boolean);
+    const res = await suprimir(correos);
+    informe.aSuprimir = aSuprimir.length;
+    informe.conservados = conservados.length;
+    informe.error = res.status >= 400 ? JSON.stringify(res.j).slice(0, 300) : null;
+    console.log(
+      "[klaviyo] supresion: " + res.jobs.length + " lotes de 100, status " + res.status + (informe.error ? " ERROR " + informe.error : "")
+    );
+    informe.quedan = conservados.length;
+    return informe;
   }
   let candidatos;
   if (fifo) {
@@ -396,10 +466,56 @@ async function purgar(opciones = {}) {
   return informe;
 }
 
+
+/**
+ * Correos que compraron en los ultimos N dias, segun Shopify (fuente de
+ * verdad: en Klaviyo los eventos de pedido todavia no han sincronizado).
+ *
+ * @param {number} dias Ventana en dias.
+ * @returns {Promise<Set<string>>} Correos con al menos un pedido en la ventana.
+ */
+async function compradoresRecientes(dias) {
+  const shop = process.env.SHOPIFY_SHOP;
+  const t = await (
+    await fetch(`https://${shop}.myshopify.com/admin/oauth/access_token`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_id: process.env.SHOPIFY_ADMIN_CLIENT_ID,
+        client_secret: process.env.SHOPIFY_ADMIN_CLIENT_SECRET,
+        grant_type: "client_credentials",
+      }),
+    })
+  ).json();
+  const limite = new Date(Date.now() - dias * 86400000).toISOString();
+  const q = `{
+    orders(first: 250, query: "created_at:>=${limite}", sortKey: CREATED_AT, reverse: true) {
+      nodes { email createdAt }
+    }
+  }`;
+  const r = await fetch(`https://${shop}.myshopify.com/admin/api/2026-01/graphql.json`, {
+    method: "POST",
+    headers: { "X-Shopify-Access-Token": t.access_token, "Content-Type": "application/json" },
+    body: JSON.stringify({ query: q }),
+  });
+  const j = await r.json();
+  if (!j.data || !j.data.orders) {
+    console.error("[klaviyo] no se pudieron leer los pedidos: " + JSON.stringify(j.errors || j).slice(0, 200));
+    return new Set();
+  }
+  const correos = new Set();
+  for (const o of j.data.orders.nodes) {
+    if (o.email) correos.add(o.email.toLowerCase().trim());
+  }
+  return correos;
+}
+
 module.exports = {
   activo,
+  compradoresRecientes,
   api,
   listarPerfiles,
+  listarSegmento,
   purgar,
   suprimir,
   suprimirSegmento,

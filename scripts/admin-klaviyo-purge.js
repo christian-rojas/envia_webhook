@@ -33,6 +33,10 @@
  *   --segmento-basura ID  id del segmento con la basura (bots): se suprime
  *                     entero con un job, sin enumerar 60.000 perfiles
  *   --max-paginas N   cuantas paginas listar (default 60 = 6.000 perfiles)
+ *   --segmento-activos ID  segmento con los perfiles que pueden recibir email
+ *                     (los que se pueden suprimir: los que NO compraron en la
+ *                     ventana)
+ *   --ventana N       ventana de compradores que se conservan (default 14 dias)
  */
 require("dotenv").config();
 
@@ -62,6 +66,8 @@ const flag = (nombre) => process.argv.includes(nombre);
     protegerConPedidos: flag("--proteger-con-pedidos"),
     fifo: flag("--fifo"),
     segmentoBasura: arg("--segmento-basura") || undefined,
+    segmentoActivos: arg("--segmento-activos") || undefined,
+    ventana: arg("--ventana") ? Number(arg("--ventana")) : undefined,
     maxPaginas: arg("--max-paginas") ? Number(arg("--max-paginas")) : undefined,
     modo: arg("--modo") || "suprimir",
     aplicar: flag("--aplicar"),
